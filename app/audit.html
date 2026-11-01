@@ -61,6 +61,18 @@
     <div class="muted">Everything your assistant may do, and everything it has done. <span id="now" hidden></span></div>
   </div>
   <section>
+    <h2>Your business</h2>
+    <div class="card" style="padding:14px 18px;display:grid;gap:12px">
+      <form id="bizform" class="row" style="gap:8px;align-items:center">
+        <input id="bizname" aria-label="Business name" maxlength="127" required style="flex:1;min-width:180px">
+        <button>Save name</button>
+      </form>
+      <label class="switch"><input type="checkbox" id="chip">
+        <span><strong>Suggest a discount on invoices</strong><br><span class="faint">Off: clients can still ask, but the invoice won't prompt them to.</span></span></label>
+      <div class="row" id="signout" hidden><button id="logout">Sign out</button></div>
+    </div>
+  </section>
+  <section>
     <h2>What your assistant may agree to</h2>
     <div class="card" style="padding:14px 18px">
       <ul id="rules" style="margin:0;padding-left:18px;display:grid;gap:4px"></ul>
@@ -103,7 +115,7 @@ const EVENT = {
   proposed: ["Proposed", ""], approved: ["Approved", "good"], executed: ["Done", "good"], skipped: ["Skipped", ""],
   cancelled: ["Withdrawn", ""], undone: ["Undone", "warn"], failed: ["Failed", "bad"], observed: ["Watched", ""],
   trust_changed: ["Trust", "warn"], automation_saved: ["Rule saved", "good"], paused: ["Paused", "warn"], resumed: ["Resumed", "good"],
-  connected: ["Connected", "good"], disconnected: ["Disconnected", "warn"], connection_lost: ["Access lost", "bad"], setting_changed: ["Setting", "warn"],
+  connected: ["Connected", "good"], disconnected: ["Disconnected", "warn"], connection_lost: ["Access lost", "bad"], setting_changed: ["Setting", "warn"], paypal_question: ["PayPal", ""],
 };
 let last = "";
 
@@ -113,6 +125,9 @@ async function load() {
   if (key === last) return;
   last = key;
   $("#now").textContent = d.now_nice;
+  if (document.activeElement !== $("#bizname")) $("#bizname").value = d.business;
+  $("#chip").checked = d.discount_chip;
+  $("#signout").hidden = !d.login;
   $("#rules").innerHTML = d.rules.map((r) => `<li>${esc(r)}</li>`).join("");
   renderGoogle(d.google);
   $("#autos").innerHTML = d.automations.map((a) => `
@@ -138,7 +153,7 @@ async function load() {
         ${r.data.why ? `<div class="why">Why: ${esc(r.data.why)}</div>` : ""}
         ${r.data.limits && r.data.limits.length ? `<div class="why">Needs approval: ${esc(r.data.limits.join(", "))}</div>` : ""}
         ${steps || reversed || kept ? `<ul class="steps">${steps}${reversed}${kept}</ul>` : ""}</td>
-      <td>${r.actor === "owner" ? "You" : "Living Invoice"}</td>
+      <td>${r.actor === "owner" ? "You" : "Living Pay"}</td>
       <td>${canUndo ? `<button class="small" data-undo="${r.proposal_id}">Undo</button>` : ""}</td>
     </tr>`;
   }).join("") || `<tr><td colspan="4" class="faint" style="text-align:center;padding:28px">No activity yet.</td></tr>`;
@@ -157,7 +172,7 @@ function renderGoogle(g) {
         <li>Download the client JSON, save it as <code>google_client.json</code> next to <code>server.py</code>, and restart the server.</li>
       </ol>`;
   } else if (!g.connected) {
-    html = `<div>Living Invoice will ask Google for two permissions: <strong>send email as you</strong> (it can't read your inbox) and <strong>see and edit your calendar events</strong>. Tokens are encrypted before they're stored.</div>
+    html = `<div>Living Pay will ask Google for two permissions: <strong>send email as you</strong> (it can't read your inbox) and <strong>see and edit your calendar events</strong>. Tokens are encrypted before they're stored.</div>
       <div class="row"><a href="/oauth/google/start"><button class="primary">Connect Google</button></a></div>`;
   } else {
     const bad = g.status !== "connected";
@@ -174,7 +189,7 @@ function renderGoogle(g) {
         ${bad ? `<a href="/oauth/google/start"><button class="primary">Reconnect Google</button></a>` : `<button id="gsync">Sync now</button>`}
         <button id="gdisc">Disconnect</button>
       </div>
-      <div class="faint">To bill a job, add #done to the event title in Google Calendar. Living Invoice takes the client from the event's guests and the amount from its description, for example "Amount: 1200".</div>`;
+      <div class="faint">To bill a job, add #done to the event title in Google Calendar. Living Pay takes the client from the event's guests and the amount from its description, for example "Amount: 1200".</div>`;
   }
   if ($("#google").dataset.html !== html) { $("#google").innerHTML = html; $("#google").dataset.html = html; }
 }
@@ -196,12 +211,22 @@ function showBanner(text, ok) {
 
 (function () {
   const p = new URLSearchParams(location.search);
-  if (p.get("google") === "connected") showBanner("Google connected. Living Invoice is now reading your calendar and sends email through Gmail.", true);
+  if (p.get("google") === "connected") showBanner("Google connected. Living Pay is now reading your calendar and sends email through Gmail.", true);
   if (p.get("google_error")) showBanner(p.get("google_error"), false);
   if (p.toString()) history.replaceState(null, "", "/audit");
 })();
 
+$("#bizform").addEventListener("submit", (e) => {
+  e.preventDefault();
+  postJSON("/api/settings/business", { name: $("#bizname").value });
+});
+$("#logout").addEventListener("click", async () => {
+  await fetch("/logout", { method: "POST" });
+  location.href = "/login";
+});
+
 document.addEventListener("change", (e) => {
+  if (e.target.id === "chip") return postJSON("/api/settings/discount_chip", { on: e.target.checked });
   if (e.target.id !== "live") return;
   const on = e.target.checked;
   if (on && !confirm("Send invoices and reminders to clients' real email addresses?")) { e.target.checked = false; return; }

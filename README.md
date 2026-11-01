@@ -19,14 +19,15 @@ Built for the [PayPal AI Hackathon](https://paypalaihackathon.devpost.com/).
 
 - **The rules are code, not a prompt.** Claude can only propose an offer. `policy.py` then allows it, sends it to the owner, or declines it, so nothing a client types can talk it past the rules.
 - **Autonomy is earned.** After the owner approves the same kind of request three times, the assistant asks to handle those itself. An undo narrows the rule back.
-- **Everything can be undone,** from the assistant or the ledger, and every action is logged with the reason.
+- **Changes to an invoice can be undone,** from the assistant or the ledger, and every action is logged with the reason. A payment that has gone through can't be undone here, and a subcontractor payout can only be stopped while PayPal is still holding it.
+- **The owner's assistant can only read PayPal.** Ask "who hasn't paid yet?" and Claude looks it up through PayPal's MCP server, limited in code to five read-only tools. It has no way to refund, cancel or send.
 
 ## What it uses
 
 | | |
 |---|---|
-| **PayPal** | Invoicing v2, Orders v2 and the JavaScript SDK, Payouts, Webhooks (sandbox) |
-| **AI** | Claude (`claude-opus-5-5`): the negotiator's tool calls, and reading rules written in plain English |
+| **PayPal** | Invoicing v2, Orders v2 and the JavaScript SDK with Pay Later, Payouts, Webhooks, the official MCP server (`@paypal/mcp`), all on the sandbox |
+| **AI** | Claude (`claude-opus-5-5`): the negotiator's tool calls, answers from PayPal's MCP server, and reading rules written in plain English |
 | **Ledger** | AG Grid Community |
 | **App** | Python standard library and SQLite, with no framework or build step |
 
@@ -48,11 +49,20 @@ cp .env.example .env    # then add your sandbox app's Client ID and Secret, and 
 python3 server.py
 ```
 
-Then open http://localhost:8790. To pay an invoice, log in with a sandbox Personal account from the PayPal developer dashboard. Create the app on a US sandbox business account, because PayPal denies payouts from some other countries.
+Then open http://localhost:8790. Questions about your PayPal account also need Node.js, for PayPal's MCP server. To pay an invoice, log in with a sandbox Personal account from the PayPal developer dashboard. Create the app on a US sandbox business account, because PayPal denies payouts from some other countries.
 
 `python3 scripts/paypal_check.py` checks every PayPal call the app relies on against your sandbox.
 
 Without a Claude key, simple keyword rules stand in for the assistant.
+
+**Put it online:** `render.yaml` and the `Dockerfile` set it up on [Render](https://render.com). It won't start on a public address until you set `LIVING_OWNER_PASSWORD`. Only a client's own invoice link and PayPal's webhook are open without that password, and `LIVING_CLAUDE_DAILY_LIMIT` caps Claude calls per day (400 by default).
+
+## What it doesn't do yet
+
+- Refunds and disputes are handled in PayPal, not here.
+- A payment plan is an agreement, not an automatic charge: the client comes back to pay each instalment.
+- PayPal lists payments taken on the invoice page as recorded by the seller, because they arrive through Orders and are then recorded on the invoice.
+- Sandbox only. It hasn't handled real money.
 
 ## Tests
 
@@ -69,6 +79,7 @@ The tests run against `fake_paypal.py`, a stand-in that behaves the way the real
 | `server.py` | The app: invoices, the assistant, approvals and the web server |
 | `policy.py` | The rules that decide what the assistant may agree to |
 | `paypal_api.py` | The PayPal REST client |
+| `paypal_mcp.py` | The read-only connection to PayPal's MCP server |
 | `fake_paypal.py` | A stand-in for PayPal, for tests and the demo |
 | `google_api.py`, `vault.py` | Optional Gmail sending, with encrypted tokens |
 | `app/` | The web pages |

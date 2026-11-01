@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: living-pay
+    runtime: docker
+    plan: 0.5c-512mb
+    healthCheckPath: /login
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: LIVING_DB
+        value: /data/living.db
+      - key: PAYPAL_ENV
+        value: sandbox
+      - key: CURRENCY_CODE
+        value: USD
+      - key: LIVING_OWNER_PASSWORD
+        sync: false
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: PUBLIC_URL
+        sync: false
+      - key: PAYPAL_WEBHOOK_ID
+        sync: false

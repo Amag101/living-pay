@@ -118,7 +118,8 @@
     <div class="a-head"><h2>Assistant</h2><span class="pill warn" id="pending" hidden></span></div>
     <div class="thread" id="thread" aria-live="polite"></div>
     <div class="chips">
-      <button data-say="rules">My rules</button>
+      <button type="button" id="askpaypal" data-say="Who hasn't paid yet?" hidden>Who hasn't paid?</button>
+          <button data-say="rules">My rules</button>
       <button data-say="summary">Summary</button>
       <button data-say="help">Help</button>
     </div>
@@ -291,6 +292,8 @@ const STATUS_WORD = { executed: ["Done", "good"], skipped: ["Declined", ""], und
   failed: ["Failed", "bad"], countered: ["Countered", ""], observed: ["Noted", ""] };
 
 function renderChat() {
+  $("#reset").hidden = !S.demo;
+  $("#askpaypal").hidden = !S.ask_paypal;
   const th = $("#thread");
   const atBottom = th.scrollHeight - th.scrollTop - th.clientHeight < 60;
   th.innerHTML = S.chat.map((m) => {
@@ -314,6 +317,9 @@ function renderChat() {
 }
 
 async function say(text) {
+  const th0 = $("#thread");
+  th0.insertAdjacentHTML("beforeend", `<div class="bubble owner">${esc(text)}</div><div class="bubble">Working on it…</div>`);
+  th0.scrollTop = th0.scrollHeight;
   render(await api("/api/chat", { text }));
   const th = $("#thread"); th.scrollTop = th.scrollHeight;
 }
@@ -373,7 +379,7 @@ $("#invform").addEventListener("submit", async (e) => {
     e.target.reset();
     $("#invform").hidden = true; $("#invsent").hidden = false;
     $("#invtitle").textContent = "Invoice sent";
-    $("#sentmsg").textContent = `${inv.number} for ${money(inv.total)} is on its way to ${inv.name}.`;
+    $("#sentmsg").textContent = `${inv.number} for ${money(inv.total)} is ready. Send ${inv.name} this link:`;
     $("#sentlink").value = clientLink(inv);
     $("#sentopen").href = clientLink(inv);
   }

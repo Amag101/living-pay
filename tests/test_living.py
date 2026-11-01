@@ -287,18 +287,18 @@ class Living(unittest.TestCase):
         self.assertTrue(st["plan_view"])
         self.assertEqual(st["client_email"], "ruth@acmedental.example")
 
-    def test_email_reminders_go_three_days_before_and_only_once(self):
+    def test_paypal_sends_reminders_three_days_before_and_only_once(self):
         self.say("Can I split this into 3 payments?")
         self.pay()  # next payment: Mon 23 Nov
-        emails = lambda: s.q("SELECT subject, body FROM outbox WHERE subject LIKE 'Your next payment%'")
+        emails = lambda: [r for r in FAKE.reminders if r["subject"].startswith("Your next payment")]
         s.sandbox("clock/advance", {"hours": 24 * 20})
         self.assertEqual(emails(), [])  # nobody asked yet, and it's too early anyway
         s.set_reminders(self.token, True)
         self.assertEqual(emails(), [])  # 10 days out
         s.sandbox("clock/advance", {"hours": 24 * 7})  # 3 days out
         self.assertEqual(len(emails()), 1)
-        self.assertIn("$400", emails()[0]["body"])
-        self.assertIn("/i/%s" % self.token, emails()[0]["body"])
+        self.assertIn("$400", emails()[0]["note"])
+        self.assertIn("/i/%s" % self.token, emails()[0]["note"])
         s.sandbox("clock/advance", {"hours": 24})
         self.assertEqual(len(emails()), 1)
 
@@ -306,7 +306,7 @@ class Living(unittest.TestCase):
         self.say("Can I split this into 3 payments?")
         self.pay()
         s.sandbox("clock/advance", {"hours": 24 * 27})
-        self.assertEqual(s.q("SELECT id FROM outbox WHERE subject LIKE 'Your next payment%'"), [])
+        self.assertEqual([r for r in FAKE.reminders if r["subject"].startswith("Your next payment")], [])
         s.set_reminders(self.token, False)
         with self.assertRaises(ValueError):  # no plan, no reminders
             s.set_reminders(s.q1("SELECT token FROM invoices WHERE number='INV-1001'")["token"], True)

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in · Living Pay</title>
+<link rel="icon" href="/logo.svg">
+<link rel="stylesheet" href="/style.css">
+<style>
+  main { max-width: 380px; margin: 12vh auto 0; padding: 0 16px; }
+  form { display: grid; gap: 12px; padding: 22px; }
+  label { display: grid; gap: 6px; font-weight: 600; }
+  #error { color: var(--bad); margin: 0; }
+</style>
+</head>
+<body>
+<main>
+  <div class="brand" style="margin-bottom:18px"><img src="/logo.svg" alt="" width="26" height="26">Living Pay</div>
+  <form class="card" id="form">
+    <label>Owner password
+      <input id="password" type="password" autocomplete="current-password" required autofocus>
+    </label>
+    <p id="error" role="alert" hidden></p>
+    <button class="primary">Sign in</button>
+  </form>
+</main>
+<script>
+const error = document.getElementById("error");
+document.getElementById("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  error.hidden = true;
+  const r = await fetch("/login", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password: document.getElementById("password").value }) });
+  if (r.ok) { location.href = "/"; return; }
+  error.textContent = (await r.json()).error;
+  error.hidden = false;
+});
+</script>
+</body>
+</html>

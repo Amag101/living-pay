@@ -227,7 +227,7 @@ function loadPayPal() {
   if (paypalLoaded) return Promise.resolve();
   return new Promise((ok, fail) => {
     const s = document.createElement("script");
-    s.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(S.paypal_client_id)}&currency=${encodeURIComponent(S.currency_code)}&intent=capture&enable-funding=paylater`;
+    s.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(S.paypal_client_id)}&currency=${encodeURIComponent(S.currency_code)}&intent=capture&enable-funding=paylater${S.paypal_env === "sandbox" ? "&buyer-country=US" : ""}`;
     s.onload = () => { paypalLoaded = true; ok(); };
     s.onerror = fail;
     document.head.appendChild(s);
@@ -256,14 +256,14 @@ function renderChat() {
   lastChat = S.chat.length;
   const m = $("#msgs");
   m.innerHTML = S.chat.length ? S.chat.map((c) => `<div class="msg ${c.role === "client" ? "client" : "agent"}">${esc(c.body)}</div>`).join("")
-    : `<div class="msg agent">Hi! I'm the assistant on this invoice from ${esc(S.business)}. I can explain it, set up a payment plan, move the due date, or tell you about paying early. What would help?</div>`;
+    : `<div class="msg agent">Hi! I'm the assistant on this invoice from ${esc(S.business)}. I can explain it, set up a payment plan or move the due date. What would help?</div>`;
   if (busy) m.insertAdjacentHTML("beforeend", `<div class="msg agent typing">Thinking…</div>`);
   const open = S.status === "sent";
   $("#text").disabled = !open || busy; $("#sendbtn").disabled = !open || busy;
   // The suggestions stay available, minus any that no longer make sense for this invoice.
   const suggestions = [
     !S.plan.length && "Can I split this into 3 payments?",
-    !S.discount_pct && !S.paid && "Any discount if I pay today?",
+    S.discount_chip && !S.discount_pct && !S.paid && "Any discount if I pay today?",
     "Could I have two more weeks?",
     "What is this invoice for?",
   ].filter(Boolean);

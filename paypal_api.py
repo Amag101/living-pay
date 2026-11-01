@@ -167,13 +167,15 @@ class Client:
 
     # ---- Orders v2 -------------------------------------------------------
 
-    def create_order(self, amount, currency, invoice_id, custom_id, description, request_id=None):
+    def create_order(self, amount, currency, invoice_id, custom_id, description, request_id=None, brand_name=None):
         unit = {"reference_id": custom_id, "custom_id": custom_id, "description": description[:127],
                 "amount": money(amount, currency)}
         if invoice_id:  # PayPal rejects a second capture with the same invoice_id
             unit["invoice_id"] = invoice_id
-        return self.call("POST", "/v2/checkout/orders", {"intent": "CAPTURE", "purchase_units": [unit]},
-                         request_id, representation=True)
+        order = {"intent": "CAPTURE", "purchase_units": [unit]}
+        if brand_name:  # the name in PayPal's checkout window
+            order["application_context"] = {"brand_name": brand_name[:127]}
+        return self.call("POST", "/v2/checkout/orders", order, request_id, representation=True)
 
     def get_order(self, order_id):
         return self.call("GET", "/v2/checkout/orders/%s" % order_id)
