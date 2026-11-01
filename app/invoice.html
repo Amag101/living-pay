@@ -177,7 +177,7 @@ function renderPay() {
       <label><input type="radio" name="which" value="balance" ${which === "balance" ? "checked" : ""}>Whole balance (${cash(S.balance)})</label></div>` : ""}
     <div id="paypal-buttons"></div>
     <div class="error" id="payerr" hidden></div>
-    ${S.payer_url && S.mode === "paypal" ? `<div class="note">Prefer PayPal's own page? <a href="${esc(S.payer_url)}" target="_blank" rel="noopener">Open this invoice on PayPal</a>.</div>` : ""}`;
+    ${S.payer_url && S.mode === "paypal" ? `<div class="note">Prefer PayPal's own page? <a href="${esc(S.payer_url)}" target="_blank" rel="noopener">Open this invoice on PayPal</a>.${S.plan.length ? ` PayPal shows the whole balance of ${cash(S.balance)}; your next payment there is the minimum due, ${cash(S.due_now)}.` : ""}</div>` : ""}`;
   box.querySelectorAll("input[name=which]").forEach((r) => r.addEventListener("change", () => { which = r.value; renderPay(); }));
 
   const holder = $("#paypal-buttons");

@@ -239,7 +239,7 @@ def build_invoice(number, recipient, items, currency, due_date, note=None, disco
     return apply_terms(invoice, discount_pct=discount_pct, min_due=min_due)
 
 
-def apply_terms(invoice, discount_pct=None, min_due=None, due_date=None):
+def apply_terms(invoice, discount_pct=None, min_due=None, due_date=None, note=None):
     """Returns a copy of `invoice` with negotiated terms. None leaves a term as it is;
     a discount of 0 or a min_due of 0 removes it."""
     inv = json.loads(json.dumps(invoice))
@@ -262,6 +262,8 @@ def apply_terms(invoice, discount_pct=None, min_due=None, due_date=None):
             inv["configuration"]["partial_payment"] = {"allow_partial_payment": False}
     if due_date:
         inv["detail"]["payment_term"] = {"due_date": due_date}
+    if note:
+        inv["detail"]["note"] = note[:4000]
     return inv
 
 

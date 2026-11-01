@@ -119,6 +119,49 @@ class Living(unittest.TestCase):
         self.assertEqual((st["balance"], st["due_now"]), (600, 300))
         self.assertEqual(self.paypal()["configuration"]["partial_payment"]["minimum_amount_due"]["value"], "300.00")
 
+    def test_plan_is_written_on_paypals_invoice_page(self):
+        self.say("Can I split this into 3 payments?")
+        note = self.paypal()["detail"]["note"]
+        self.assertIn("Payment plan agreed: $400 by Sat 24 Oct; $400 by Mon 23 Nov; $400 by Wed 23 Dec", note)
+        self.assertIn("Pay at least $400 now", note)
+        self.assertIn("https://living.example/i/%s" % self.token, note)
+        self.pay()  # after a payment the note shows only what's left
+        note = self.paypal()["detail"]["note"]
+        self.assertIn("Payment plan agreed: $400 by Mon 23 Nov; $400 by Wed 23 Dec", note)
+
+    def test_undoing_a_plan_takes_it_off_paypals_page(self):
+        self.say("Can I split this into 3 payments?")
+        s.owner_message("undo")
+        self.assertNotIn("Payment plan agreed", self.paypal()["detail"]["note"])
+
+    def test_pay_in_full_discount_does_not_survive_a_payment_plan(self):
+        self.say("Any discount if I pay today?")
+        self.assertEqual(self.paypal()["amount"]["value"], "1140.00")
+        reply = self.say("Can I split this into 3 payments?")
+        self.assertIn("the 5% discount was for paying in full now, so it no longer applies", reply)
+        self.assertEqual(self.paypal()["amount"]["value"], "1200.00")
+        st = s.living_state(self.token)
+        self.assertEqual((st["discount_pct"], st["balance"], st["due_now"]), (0, 1200, 400))
+        s.owner_message("undo")  # undo puts the discount back and removes the plan
+        st = s.living_state(self.token)
+        self.assertEqual((st["discount_pct"], st["plan"]), (5, []))
+
+    def test_owner_agreed_discount_stays_on_a_plan(self):
+        self.say("Can I get 10% off?")
+        s.owner_message("approve")
+        self.say("Can I split this into 3 payments?")
+        st = s.living_state(self.token)
+        self.assertEqual((st["discount_pct"], st["balance"], st["due_now"]), (10, 1080, 360))
+
+    def test_real_paypal_uses_the_real_date(self):
+        base = os.environ.pop("PAYPAL_API_BASE")
+        try:
+            s.init_db()
+            self.assertEqual(s.get_setting("clock"), "real")
+        finally:
+            os.environ["PAYPAL_API_BASE"] = base
+            s.set_setting("clock", "simulated")
+
     def test_owner_declines(self):
         self.say("Can I get 10% off?")
         s.owner_message("skip")

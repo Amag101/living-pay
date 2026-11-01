@@ -140,7 +140,10 @@ def plan_schedule(balance_cents, n, first_cents, start, gap_days):
 def _plan(offer, inv, m, history):
     n = int(offer["installments"])
     gap = int(offer.get("gap_days") or 30)
-    total = cents(inv["amount"]) * (100 - float(inv.get("discount_pct") or 0)) / 100.0
+    # A discount given for paying in full now doesn't survive choosing to pay in parts.
+    dropped = float(inv.get("discount_pct") or 0) if history.get("discount_needs_full_payment") else 0
+    pct = 0 if dropped else float(inv.get("discount_pct") or 0)
+    total = cents(inv["amount"]) * (100 - pct) / 100.0
     balance = int(round(total)) - cents(inv.get("amount_paid") or 0)
     if balance <= 0:
         return Verdict(DENY, ["nothing is left to pay"])
@@ -169,6 +172,8 @@ def _plan(offer, inv, m, history):
     schedule = plan_schedule(balance, n, first, today, gap)
     terms = {"installments": n, "gap_days": gap, "schedule": schedule,
              "min_due": schedule[0]["amount"], "due_at": schedule[-1]["due"]}
+    if dropped:
+        terms.update(discount_pct=0, dropped_discount_pct=dropped)
     return Verdict(decision, reasons or ["within the owner's payment plan rules"], terms)
 
 

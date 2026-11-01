@@ -207,6 +207,15 @@ class PayPalInvoicing(unittest.TestCase):
         self.assertTrue(s.q1("SELECT id FROM chat WHERE body LIKE '%is now settled%'"))
         self.assertIn("**Approve?** Pay Ada Nwosu $300", bot())  # the subcontractor's share comes next
 
+    def test_paying_on_paypals_page_moves_the_plan_on(self):
+        inv, pp = invoice_brand_workshop()
+        s.client_message(inv["token"], "Can I split this into 3 payments?")
+        self.assertEqual(payer("/__fake/invoices/%s/pay" % pp["id"], {"amount": 400})[0], 200)
+        self.assertEqual(deliver(), 200)
+        note = FAKE.invoices[pp["id"]]["detail"]["note"]
+        self.assertIn("Payment plan agreed: $400 by Mon 23 Nov; $400 by Wed 23 Dec", note)
+        self.assertEqual(s.q1("SELECT amount_paid FROM invoices WHERE id=?", (inv["id"],))["amount_paid"], 400)
+
     def test_forged_webhooks_are_ignored(self):
         inv, pp = invoice_brand_workshop()
         payer("/__fake/invoices/%s/pay" % pp["id"])

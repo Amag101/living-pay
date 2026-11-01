@@ -239,7 +239,7 @@ function render(state) {
   $("#now").textContent = state.now_nice;
   const real = state.clock === "real", g = state.google;
   $("#clocklabel").textContent = real ? "Real time" : "Simulated time";
-  $("#realbtns").hidden = !real;
+  $("#realbtns").hidden = !g.connected;
   $("#simbtns").hidden = real;
   $("#toolsnote").textContent = g.connected ? `(Gmail and Google Calendar: ${g.account}${g.live_email ? "" : ", test mode"})` : "(sandbox)";
   $("#pstatus").textContent = g.connected ? "watching Gmail, Google Calendar and 2 more" : "watching 5 tools";

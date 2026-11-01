@@ -291,6 +291,8 @@ def init_db():
     migrate()
     if not get_setting("now"):
         seed()
+    if paypal_mode() == "paypal":  # PayPal dates its invoices with today's date, so ours must match
+        set_setting("clock", "real")
 
 
 def reset():
@@ -438,6 +440,18 @@ class Accounting(Connector):
         return None
 
 
+def paypal_note(inv):
+    """The note on PayPal's invoice page. PayPal has no field for a schedule (only a minimum
+    payment), so the agreed plan is written out here for anyone paying on PayPal's own page."""
+    ask = "Questions, or need a payment plan? Ask the invoice: %s" % invoice_link(inv)
+    left = [r for r in plan_rows(inv) if r["owed"] > 0]
+    if not left:
+        return ask
+    return "Payment plan agreed: %s. Pay at least %s now. Questions, or want to change the plan? Ask the invoice: %s" % (
+        "; ".join("%s by %s" % (cash(r["owed"]), nice_date(r["due"] + "T12:00")) for r in left),
+        cash(due_now(inv)), invoice_link(inv))
+
+
 class PayPalAccounting(Accounting):
     """Invoices live in PayPal (Invoicing v2). The local row mirrors them so the
     automations keep working, and webhooks or polling bring PayPal's changes back."""
@@ -488,9 +502,10 @@ class PayPalAccounting(Accounting):
                 raise ValueError("%s is %s, so its terms can't change" % (inv["number"], inv["status"]))
             current = client.get_invoice(inv["paypal_id"])
             due = params.get("due_at")
+            terms = dict(inv, **{k: params[k] for k in TERMS if params.get(k) is not None})
             updated = client.update_invoice(paypal.apply_terms(
                 current, discount_pct=params.get("discount_pct"), min_due=params.get("min_due"),
-                due_date=due[:10] if due else None), request_id=rid)
+                due_date=due[:10] if due else None, note=paypal_note(terms)), request_id=rid)
             ex("UPDATE invoices SET snapshot=? WHERE id=?", (json.dumps(updated), inv["id"]))
             return self.set_terms(inv, params)
         if op == "record_payment":
@@ -869,7 +884,7 @@ def google_disconnect(quiet=False):
         if quiet:
             return
         set_setting("now", iso(now()))
-        set_setting("clock", "simulated")
+        set_setting("clock", "real" if paypal_mode() == "paypal" else "simulated")
         log("disconnected", "Disconnected Google (%s)%s" % (row["account"], "" if revoked else
             "; Google didn't confirm the revoke, remove access in your Google account"), actor="owner")
         post("bot", "Disconnected from Google. Your stored tokens are deleted%s. I'm back on the demo "
@@ -1030,6 +1045,7 @@ def reconcile_invoice(pp):
         result = PAYPAL_ACCOUNTING.add_payment(inv, {"amount": amount, "reference": ref, "method": "PAYPAL",
                                                      "external_id": t["payment_id"]})
         payment_received(inv, result, "paypal")
+        advance_plan(q1("SELECT * FROM invoices WHERE id=?", (inv["id"],)))
     inv = q1("SELECT * FROM invoices WHERE id=?", (inv["id"],))
     if pp.get("status") == "CANCELLED" and inv["status"] == "sent":
         ex("UPDATE invoices SET status='void' WHERE id=?", (inv["id"],))
@@ -2170,7 +2186,7 @@ def sandbox(action, body):
                 payment_received(inv, result, "owner")
         elif action == "clock/advance":
             if get_setting("clock") == "real":
-                raise ValueError("The clock is real while Google is connected")
+                raise ValueError("The clock is real while Google or real PayPal is connected")
             hours = max(1, min(int(body.get("hours", 24)), 24 * 31))
             start = now()
             end = start + timedelta(hours=hours)
@@ -2224,7 +2240,18 @@ def living(token):
 def client_history(inv):
     n = q1("SELECT COUNT(*) n FROM invoices WHERE contact_id=? AND status='paid' AND id!=?",
            (inv["contact_id"], inv["id"]))["n"]
-    return {"paid_invoices": n, "today": now().date()}
+    return {"paid_invoices": n, "today": now().date(),
+            "discount_needs_full_payment": discount_needs_full_payment(inv)}
+
+
+def discount_needs_full_payment(inv):
+    """Is the invoice's current discount one that was given for paying in full now?"""
+    if not inv.get("discount_pct") or inv.get("amount_paid"):
+        return False
+    o = q1("SELECT terms FROM offers WHERE invoice_id=? AND kind='discount' AND status IN ('applied','approved') "
+           "ORDER BY id DESC", (inv["id"],))
+    terms = json.loads(o["terms"]) if o else {}
+    return bool(terms.get("requires_full_payment_now")) and terms.get("discount_pct") == inv["discount_pct"]
 
 
 def plan_of(inv):
@@ -2273,8 +2300,12 @@ def describe_terms(kind, terms):
         text = "%g%% off, so the total becomes %s" % (round(terms["discount_pct"], 1), cash(terms["new_total"]))
         return text + (" if the full balance is paid now" if terms.get("requires_full_payment_now") else "")
     if kind == "payment_plan":
-        return "%d payments: %s" % (terms["installments"], ", ".join(
+        text = "%d payments: %s" % (terms["installments"], ", ".join(
             "%s on %s" % (cash(p["amount"]), nice_date(p["due"] + "T12:00")) for p in terms["schedule"]))
+        if terms.get("dropped_discount_pct"):
+            text += " (the %g%% discount was for paying in full now, so it no longer applies)" % (
+                terms["dropped_discount_pct"])
+        return text
     if kind == "extension":
         return "a new due date of %s" % nice_date(terms["due_at"] + "T12:00")
     return kind
@@ -2293,8 +2324,11 @@ def terms_params(inv, kind, terms):
                           plan=json.dumps({"schedule": schedule, "base_paid": inv["amount_paid"] or 0}))
         return params
     if kind == "payment_plan":
-        return {"min_due": terms["min_due"], "due_at": terms["due_at"] + "T12:00",
-                "plan": json.dumps({"schedule": terms["schedule"], "base_paid": inv["amount_paid"] or 0})}
+        params = {"min_due": terms["min_due"], "due_at": terms["due_at"] + "T12:00",
+                  "plan": json.dumps({"schedule": terms["schedule"], "base_paid": inv["amount_paid"] or 0})}
+        if terms.get("dropped_discount_pct"):
+            params["discount_pct"] = 0
+        return params
     return {"due_at": terms["due_at"] + "T12:00"}
 
 
@@ -2909,6 +2943,12 @@ def create_checkout(token, which):
     return {"order_id": order["id"], "amount": amount}
 
 
+def advance_plan(inv):
+    """After a payment: the next installment becomes the minimum, and PayPal's note shows what's left."""
+    if inv["status"] == "sent" and plan_of(inv):
+        connector("accounting").execute("update_terms", {"invoice_id": inv["id"], "min_due": due_now(inv)})
+
+
 def settle_payment(inv, amount, reference, method, actor):
     """Records a payment, moves a plan on to its next installment and tells both sides."""
     acc = connector("accounting")
@@ -2919,8 +2959,7 @@ def settle_payment(inv, amount, reference, method, actor):
     payment_received(inv, result, actor)
     inv = q1("SELECT * FROM invoices WHERE id=?", (inv["id"],))
     nxt = due_now(inv)
-    if inv["status"] == "sent" and plan_of(inv) and abs(nxt - (inv["min_due"] or 0)) > 0.005:
-        acc.execute("update_terms", {"invoice_id": inv["id"], "min_due": nxt})
+    advance_plan(inv)
     chat_add(inv["id"], "agent", "Thank you! %s received. %s" % (cash(amount), (
         "This invoice is now fully paid." if inv["status"] == "paid"
         else "%s is left, and %s is due next." % (cash(invoice_balance(inv)), cash(nxt)))))
