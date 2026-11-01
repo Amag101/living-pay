@@ -1,4 +1,4 @@
-"""Living Invoice tests: the client page's negotiator, owner escalations and PayPal checkout,
+"""Living Pay tests: the client page's negotiator, owner escalations and PayPal checkout,
 against the fake PayPal sandbox. The AI layer is off except where a test scripts Claude's replies.
 
     python3 tests/test_living.py
@@ -18,7 +18,7 @@ from fake_paypal import FAKE  # noqa: E402
 
 _server, BASE = fake_paypal.serve()
 os.environ.update({
-    "INVISIBLE_DB": os.path.join(tempfile.mkdtemp(), "test.db"), "INVISIBLE_LLM": "off",
+    "LIVING_DB": os.path.join(tempfile.mkdtemp(), "test.db"), "LIVING_LLM": "off",
     "PAYPAL_API_BASE": BASE, "PAYPAL_CLIENT_ID": "cid", "PAYPAL_CLIENT_SECRET": "secret",
     "PAYPAL_WEBHOOK_ID": FAKE.webhook_id, "PUBLIC_URL": "https://living.example",
 })
@@ -94,7 +94,7 @@ class Living(unittest.TestCase):
         reply = self.say("Can I get 10% off?")
         self.assertIn("I need Kora Studio's OK for that (10% off, so the total becomes $1,080)", reply)
         p = s.q1("SELECT * FROM proposals WHERE status='pending'")
-        self.assertIn("counter #%d" % p["id"], owner_last())
+        self.assertIn("counter $750", owner_last())
         self.assertEqual(self.paypal()["amount"]["value"], "1200.00")  # nothing changes until the owner says so
         self.assertIn("still waiting", self.say("And can I have 8 weeks more?"))
         self.assertTrue(s.living_state(self.token)["waiting_for_owner"])
@@ -123,7 +123,7 @@ class Living(unittest.TestCase):
         self.say("Can I split this into 3 payments?")
         note = self.paypal()["detail"]["note"]
         self.assertIn("Payment plan agreed: $400 by Sat 24 Oct; $400 by Mon 23 Nov; $400 by Wed 23 Dec", note)
-        self.assertIn("Pay at least $400 now", note)
+        self.assertIn("Next payment: $400 by Sat 24 Oct", note)
         self.assertIn("https://living.example/i/%s" % self.token, note)
         self.pay()  # after a payment the note shows only what's left
         note = self.paypal()["detail"]["note"]
@@ -153,14 +153,22 @@ class Living(unittest.TestCase):
         st = s.living_state(self.token)
         self.assertEqual((st["discount_pct"], st["balance"], st["due_now"]), (10, 1080, 360))
 
-    def test_real_paypal_uses_the_real_date(self):
+    def test_real_paypal_starts_clean_with_the_real_date(self):
         base = os.environ.pop("PAYPAL_API_BASE")
         try:
-            s.init_db()
+            s.reset()
             self.assertEqual(s.get_setting("clock"), "real")
+            self.assertEqual((s.q("SELECT id FROM invoices"), s.q("SELECT id FROM contacts")), ([], []))
+            self.assertIsNone(s.q1("SELECT id FROM automations WHERE template='appointment_reminders'"))
         finally:
             os.environ["PAYPAL_API_BASE"] = base
-            s.set_setting("clock", "simulated")
+
+    def test_later_installments_are_not_called_due_now(self):
+        self.say("Can I split this into 3 payments?")
+        self.assertTrue(s.living_state(self.token)["due_today"])
+        self.pay()
+        st = s.living_state(self.token)
+        self.assertEqual((st["due_today"], st["next_due"]), (False, "Mon 23 Nov"))
 
     def test_owner_declines(self):
         self.say("Can I get 10% off?")
@@ -227,6 +235,96 @@ class Living(unittest.TestCase):
         reply = self.say("Does this include the source files for the logo?")
         self.assertIn("passed it to Kora Studio", reply)
         self.assertIn("**Question from Ruth Okafor", owner_last())
+
+    def test_assistant_knows_the_pay_today_discount(self):
+        calls = []
+
+        def fake_create(**kw):
+            calls.append(kw)
+            return NS(stop_reason="end_turn", content=[NS(type="text", text="5% off if you pay today. Shall I?")])
+
+        s.LLM.client, original = object(), s.LLM.create
+        s.LLM.create = fake_create
+        try:
+            self.say("can i get a discount")
+        finally:
+            s.LLM.client, s.LLM.create = None, original
+        self.assertIn('"discount_for_paying_in_full_today_pct": 5', calls[0]["system"])
+        self.assertIn("don't request anything yet", calls[0]["system"])
+        self.assertIsNone(s.q1("SELECT id FROM offers"))
+
+    def test_discount_approved_after_a_plan_resplits_the_plan(self):
+        # The screenshot case: the discount is asked for first, the plan agreed while it waits.
+        self.say("Can I get 5% off?")
+        self.say("Can I split this into 3 payments?")
+        self.assertEqual(s.living_state(self.token)["waiting_for_owner"] is not None, True)
+        s.owner_message("approve")
+        st = s.living_state(self.token)
+        self.assertEqual(st["total"], 1140)
+        self.assertEqual([p["amount"] for p in st["plan"]], [380, 380, 380])
+        self.assertEqual(self.paypal()["configuration"]["partial_payment"]["minimum_amount_due"]["value"], "380.00")
+        self.assertIn("$380 by Sat 24 Oct", self.paypal()["detail"]["note"])
+        s.owner_message("undo")  # undo restores the plan as it was, as well as the price
+        st = s.living_state(self.token)
+        self.assertEqual((st["total"], [p["amount"] for p in st["plan"]]), (1200, [400, 400, 400]))
+
+    def test_undoing_an_older_change_keeps_a_newer_one(self):
+        self.say("Can I split this into 3 payments?")
+        plan = s.q1("SELECT id FROM proposals WHERE dedupe LIKE 'offer:%' AND status='executed'")["id"]
+        self.say("Could I have two more weeks?")  # a later change to the due date
+        self.say("Can I get 5% off?")
+        s.owner_message("approve")
+        s.owner_message("undo #%d" % plan)
+        st = s.living_state(self.token)
+        self.assertEqual((st["discount_pct"], st["plan"]), (5, []))  # the discount stays, the plan goes
+
+    def test_plan_page_appears_after_the_first_payment(self):
+        self.assertFalse(s.living_state(self.token)["plan_view"])
+        self.say("Can I split this into 3 payments?")
+        self.assertFalse(s.living_state(self.token)["plan_view"])
+        self.pay()
+        st = s.living_state(self.token)
+        self.assertTrue(st["plan_view"])
+        self.assertEqual(st["client_email"], "ruth@acmedental.example")
+
+    def test_email_reminders_go_three_days_before_and_only_once(self):
+        self.say("Can I split this into 3 payments?")
+        self.pay()  # next payment: Mon 23 Nov
+        emails = lambda: s.q("SELECT subject, body FROM outbox WHERE subject LIKE 'Your next payment%'")
+        s.sandbox("clock/advance", {"hours": 24 * 20})
+        self.assertEqual(emails(), [])  # nobody asked yet, and it's too early anyway
+        s.set_reminders(self.token, True)
+        self.assertEqual(emails(), [])  # 10 days out
+        s.sandbox("clock/advance", {"hours": 24 * 7})  # 3 days out
+        self.assertEqual(len(emails()), 1)
+        self.assertIn("$400", emails()[0]["body"])
+        self.assertIn("/i/%s" % self.token, emails()[0]["body"])
+        s.sandbox("clock/advance", {"hours": 24})
+        self.assertEqual(len(emails()), 1)
+
+    def test_no_reminder_unless_asked_or_if_already_paid(self):
+        self.say("Can I split this into 3 payments?")
+        self.pay()
+        s.sandbox("clock/advance", {"hours": 24 * 27})
+        self.assertEqual(s.q("SELECT id FROM outbox WHERE subject LIKE 'Your next payment%'"), [])
+        s.set_reminders(self.token, False)
+        with self.assertRaises(ValueError):  # no plan, no reminders
+            s.set_reminders(s.q1("SELECT token FROM invoices WHERE number='INV-1001'")["token"], True)
+
+    def test_calendar_file_lists_payments_still_to_make(self):
+        self.say("Can I split this into 3 payments?")
+        self.pay()
+        data, number = s.calendar_file(self.token)
+        text = data.decode()
+        self.assertEqual(number, "INV-1003")
+        self.assertEqual(text.count("BEGIN:VEVENT"), 2)
+        self.assertIn("DTSTART;VALUE=DATE:20261123", text)
+        self.assertNotIn("DTSTART;VALUE=DATE:20261024", text)
+        self.assertIn("SUMMARY:Pay $400 to Kora Studio", text)
+        self.assertIn("TRIGGER:-P1D", text)
+        self.assertTrue(text.endswith("END:VCALENDAR\r\n"))
+        with self.assertRaises(KeyError):
+            s.calendar_file("not-a-token")
 
     def test_chat_is_rate_limited(self):
         s.CHAT_LIMIT, original = (2, 600), s.CHAT_LIMIT

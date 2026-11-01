@@ -10,8 +10,8 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-os.environ["INVISIBLE_DB"] = os.path.join(tempfile.mkdtemp(), "test.db")
-os.environ["INVISIBLE_LLM"] = "off"
+os.environ["LIVING_DB"] = os.path.join(tempfile.mkdtemp(), "test.db")
+os.environ["LIVING_LLM"] = "off"
 for k in ("PAYPAL_CLIENT_ID", "PAYPAL_CLIENT_SECRET", "PAYPAL_API_BASE"):
     os.environ.pop(k, None)
 

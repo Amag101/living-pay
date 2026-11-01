@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Checks every PayPal call Living Invoice relies on against the real PayPal sandbox,
+Checks every PayPal call Living Pay relies on against the real PayPal sandbox,
 using the credentials in .env, and prints PASS / FAIL for each. Creates a few
 sandbox invoices, an order and a payout; cancels what it can afterwards.
 Sandbox only: it refuses to run with PAYPAL_ENV=live.
@@ -76,8 +76,8 @@ def main():
 
     def body(n):
         return paypal.build_invoice("LI-CHECK-%s-%d" % (tag, n), {"name": "Check Client", "email": buyer},
-                                    [{"name": "Living Invoice check", "amount": 1200}], "USD", due,
-                                    note="Created by Living Invoice's sandbox check.", invoicer_name="Kora Studio")
+                                    [{"name": "Living Pay check", "amount": 1200}], "USD", due,
+                                    note="Created by Living Pay's sandbox check.", invoicer_name="Kora Studio")
 
     print("PayPal sandbox check (%s)\n" % paypal.SANDBOX_BASE)
     if not check("1. Sign in with your app's credentials", lambda: bool(client.token()) and None):
@@ -149,14 +149,14 @@ def main():
     check("9. Cancel a sent invoice (what undo does)", cancel)
 
     def order():
-        o = client.create_order(400, "USD", None, "li:check", "Living Invoice check", request_id="li-check-%s-o" % tag)
+        o = client.create_order(400, "USD", None, "li:check", "Living Pay check", request_id="li-check-%s-o" % tag)
         assert o.get("status") == "CREATED", o.get("status")
         return "order %s created; a buyer approves it in PayPal's popup" % o["id"]
     check("10. Create a checkout order (Orders v2)", order)
 
     def payout():
         out = client.create_payout("li-check-%s" % tag, "subcontractor.%s@example.com" % tag.lower(), 25, "USD",
-                                   "Sandbox check", "Living Invoice check")
+                                   "Sandbox check", "Living Pay check")
         bid = out["batch_header"]["payout_batch_id"]
         items = client.get_payout_batch(bid).get("items", [])
         state["item"] = items[0] if items else {}

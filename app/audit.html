@@ -3,12 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Audit Log</title>
+<title>Settings</title>
+<link rel="icon" href="/logo.svg">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;550;600;700&display=swap">
 <link rel="stylesheet" href="/style.css">
+
 <style>
-  .wrap { max-width: 1080px; margin: 0 auto; padding: 24px; display: grid; gap: 24px; }
-  h1 { font-size: 22px; margin: 0 0 4px; }
-  h2 { font-size: 13px; font-weight: 600; color: var(--ink-3); text-transform: uppercase; letter-spacing: .05em; margin: 0 0 8px; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 28px 24px 48px; display: grid; gap: 28px; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  h2 { font-size: 15px; font-weight: 600; margin: 0 0 10px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
   .auto { padding: 14px 16px; display: grid; gap: 6px; align-content: start; }
   .auto .name { font-weight: 600; }
@@ -45,15 +48,25 @@
 </head>
 <body>
 <header class="topbar">
-  <div class="brand"><span class="mark" aria-hidden="true"></span>Living Invoice <span class="tag">audit log</span></div>
-  <div class="hint">Every action, why it happened, and how to reverse it. This is the only page the product keeps.</div>
-  <nav><a href="/"><button>Back to demo</button></a></nav>
+  <a class="brand" href="/"><img src="/logo.svg" alt="" width="26" height="26">Living Pay</a>
+  <nav class="mainnav" aria-label="Main">
+    <a href="/">Invoices</a>
+    <a href="/ledger">Ledger</a>
+    <a href="/audit" aria-current="page">Settings</a>
+  </nav>
 </header>
 <main class="wrap">
   <div>
-    <h1>Kora Studio</h1>
-    <div class="muted">Simulated time: <span id="now">…</span></div>
+    <h1>Settings</h1>
+    <div class="muted">Everything your assistant may do, and everything it has done. <span id="now" hidden></span></div>
   </div>
+  <section>
+    <h2>What your assistant may agree to</h2>
+    <div class="card" style="padding:14px 18px">
+      <ul id="rules" style="margin:0;padding-left:18px;display:grid;gap:4px"></ul>
+      <p class="faint" style="margin:10px 0 0">To change a rule, just tell your assistant on the Invoices page, like “allow up to 4 payments”.</p>
+    </div>
+  </section>
   <section>
     <h2>Automations</h2>
     <div class="grid" id="autos"></div>
@@ -100,6 +113,7 @@ async function load() {
   if (key === last) return;
   last = key;
   $("#now").textContent = d.now_nice;
+  $("#rules").innerHTML = d.rules.map((r) => `<li>${esc(r)}</li>`).join("");
   renderGoogle(d.google);
   $("#autos").innerHTML = d.automations.map((a) => `
     <div class="card auto">

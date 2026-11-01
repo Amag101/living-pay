@@ -4,9 +4,9 @@ Envelope encryption for third-party credentials (OAuth tokens).
     master key  --wraps-->  data key (one per business)  --encrypts-->  tokens
 
 - The master key never touches the database. It comes from the
-  INVISIBLE_MASTER_KEY environment variable, or from a key file created with
+  LIVING_MASTER_KEY environment variable, or from a key file created with
   owner-only permissions outside the project folder (default
-  ~/.invisible/master.key). In production this is a KMS key (AWS KMS, Google
+  ~/.livingpay/master.key). In production this is a KMS key (AWS KMS, Google
   Cloud KMS); only `_master()` changes.
 - The wrapped data key is stored in the database. Stealing the database alone
   reveals no tokens.
@@ -26,7 +26,7 @@ except ImportError:  # the prototype still runs in sandbox mode without it
     Fernet = InvalidToken = None
     AVAILABLE = False
 
-DEFAULT_KEY_FILE = os.path.join(os.path.expanduser("~"), ".invisible", "master.key")
+DEFAULT_KEY_FILE = os.path.join(os.path.expanduser("~"), ".livingpay", "master.key")
 
 
 class VaultError(Exception):
@@ -47,10 +47,10 @@ class Vault:
 
     @staticmethod
     def _master():
-        env = os.environ.get("INVISIBLE_MASTER_KEY")
+        env = os.environ.get("LIVING_MASTER_KEY")
         if env:
             return Fernet(env.encode())
-        path = os.environ.get("INVISIBLE_KEY_FILE", DEFAULT_KEY_FILE)
+        path = os.environ.get("LIVING_KEY_FILE", DEFAULT_KEY_FILE)
         if not os.path.exists(path):
             folder = os.path.dirname(path)
             os.makedirs(folder, mode=0o700, exist_ok=True)

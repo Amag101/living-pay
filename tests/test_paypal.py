@@ -18,7 +18,7 @@ from fake_paypal import FAKE  # noqa: E402
 
 _server, BASE = fake_paypal.serve()
 os.environ.update({
-    "INVISIBLE_DB": os.path.join(tempfile.mkdtemp(), "test.db"), "INVISIBLE_LLM": "off",
+    "LIVING_DB": os.path.join(tempfile.mkdtemp(), "test.db"), "LIVING_LLM": "off",
     "PAYPAL_API_BASE": BASE, "PAYPAL_CLIENT_ID": "cid", "PAYPAL_CLIENT_SECRET": "secret",
     "PAYPAL_WEBHOOK_ID": FAKE.webhook_id, "PUBLIC_URL": "https://living.example",
 })
@@ -215,6 +215,7 @@ class PayPalInvoicing(unittest.TestCase):
         note = FAKE.invoices[pp["id"]]["detail"]["note"]
         self.assertIn("Payment plan agreed: $400 by Mon 23 Nov; $400 by Wed 23 Dec", note)
         self.assertEqual(s.q1("SELECT amount_paid FROM invoices WHERE id=?", (inv["id"],))["amount_paid"], 400)
+        self.assertIn("Thank you! $400 received", s.living_state(inv["token"])["chat"][-1]["body"])
 
     def test_forged_webhooks_are_ignored(self):
         inv, pp = invoice_brand_workshop()

@@ -3,201 +3,191 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Living Invoice</title>
+<title>Living Pay</title>
+<link rel="icon" href="/logo.svg">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;550;600;700&display=swap">
 <link rel="stylesheet" href="/style.css">
 <style>
-  .layout {
-    display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 24px;
-    padding: 24px; max-width: 1280px; margin: 0 auto; align-items: start;
-  }
-  .section-label { font-size: 12px; font-weight: 600; color: var(--ink-3); text-transform: uppercase; letter-spacing: .05em; margin: 0 0 8px; }
-  .toast { background: var(--bad-soft); color: var(--bad); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 12px; }
-  .clock { display: flex; align-items: center; gap: 16px; padding: 14px 16px; margin-bottom: 16px; flex-wrap: wrap; }
-  .clock .time { font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; flex: 1; min-width: 180px; }
-  .clock .time small { display: block; font-size: 12px; font-weight: 500; color: var(--ink-3); }
-  .clock .btns { display: flex; gap: 8px; }
-  .tabs { display: flex; gap: 4px; padding: 8px 8px 0; border-bottom: 1px solid var(--line); overflow-x: auto; }
-  .tabs button {
-    border: none; background: none; border-radius: 6px 6px 0 0; padding: 8px 12px; color: var(--ink-2);
-    border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap;
-  }
-  .tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
-  .tabs .count { font-size: 11px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; margin-left: 4px; }
-  .panel { overflow-x: auto; }
-  .panel[hidden] { display: none; }
-  .who { font-weight: 550; }
-  .sub { color: var(--ink-3); font-size: 12.5px; }
-  .actions { display: flex; gap: 6px; justify-content: flex-end; }
-  .msg-item { padding: 12px 16px; border-bottom: 1px solid var(--line); }
-  .msg-item:last-child { border-bottom: none; }
-  .msg-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
-  .msg-body { white-space: pre-wrap; color: var(--ink-2); font-size: 13px; }
-  .empty { padding: 28px 16px; text-align: center; color: var(--ink-3); }
-  form.new { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 16px; }
-  form.new label { display: grid; gap: 4px; font-size: 12.5px; color: var(--ink-2); }
-  form.new .full { grid-column: 1 / -1; }
-  form.new .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
-  form.new .row3 .span2 { grid-column: span 2; }
-  .note { padding: 12px 16px; font-size: 12.5px; color: var(--ink-3); border-top: 1px solid var(--line); }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 24px; padding: 28px 24px 48px; max-width: 1240px; margin: 0 auto; align-items: start; }
+  .head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
+  .head h1 { font-size: 26px; margin: 0; }
+  .toast { background: var(--bad-soft); color: var(--bad); border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; }
+  .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .stat { padding: 14px 16px; }
+  .stat .l { font-size: 13.5px; color: var(--ink-2); }
+  .stat .v { font-size: 24px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px 16px; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  .row:last-child { border-bottom: none; }
+  .row .who { font-weight: 600; overflow-wrap: anywhere; }
+  .row .sub { color: var(--ink-3); font-size: 13.5px; overflow-wrap: anywhere; }
+  .row .amt { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .row .acts { grid-column: 1 / -1; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .row .acts button, .row .acts .button { min-height: 34px; padding: 4px 11px; font-size: 13.5px; }
+  .empty { padding: 44px 20px; text-align: center; }
+  .empty h2 { font-size: 18px; margin: 0 0 4px; }
+  .empty p { color: var(--ink-2); margin: 0 0 16px; }
 
-  /* phone */
-  .phone {
-    position: sticky; top: 16px; border-radius: 32px; border: 10px solid #1d1c1a; background: var(--chat-bg);
-    height: calc(100vh - 120px); min-height: 560px; max-height: 820px; display: flex; flex-direction: column;
-    overflow: hidden; box-shadow: 0 1px 2px rgba(0,0,0,.08);
-  }
-  .phone-head { background: var(--accent); color: #fff; padding: 12px 14px; display: flex; align-items: center; gap: 10px; }
-  .avatar { width: 34px; height: 34px; border-radius: 50%; background: rgba(255,255,255,.18); display: grid; place-items: center; }
-  .avatar span { width: 16px; height: 16px; border-radius: 50%; border: 2px dashed #fff; }
-  .phone-head .name { font-weight: 600; }
-  .phone-head .status { font-size: 12px; opacity: .85; }
-  .badge { margin-left: auto; background: #fff; color: var(--accent); font-size: 12px; font-weight: 700; border-radius: 999px; padding: 1px 8px; }
-  .thread { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 6px; }
-  .bubble {
-    max-width: 86%; padding: 7px 10px 5px; border-radius: 10px; font-size: 13.5px; line-height: 1.42;
-    box-shadow: 0 1px 1px rgba(0,0,0,.08); overflow-wrap: anywhere;
-  }
-  .bubble.bot { background: var(--bubble-bot); align-self: flex-start; border-top-left-radius: 2px; }
-  .bubble.owner { background: var(--bubble-me); align-self: flex-end; border-top-right-radius: 2px; }
-  .bubble .t { font-size: 10.5px; color: var(--ink-3); text-align: right; margin-top: 2px; }
-  .bubble blockquote {
-    margin: 6px 0; padding: 4px 8px; border-left: 3px solid var(--accent); background: var(--surface-2);
-    color: var(--ink-2); border-radius: 0 6px 6px 0; font-size: 12.5px; white-space: pre-wrap;
-  }
-  .bubble em { color: var(--ink-3); font-size: 12px; }
-  .bubble .btnrow { display: flex; gap: 6px; margin-top: 8px; }
-  .bubble .btnrow button { flex: 1; color: var(--accent); font-weight: 600; background: var(--surface-2); border-color: var(--line); }
-  .bubble .done { margin-top: 6px; }
-  .chips { display: flex; gap: 6px; padding: 8px 10px 0; overflow-x: auto; }
-  .chips button { border-radius: 999px; font-size: 12px; padding: 3px 10px; white-space: nowrap; }
-  .composer { display: flex; gap: 8px; padding: 8px 10px 10px; }
-  .composer input { border-radius: 999px; }
-  .composer button { border-radius: 999px; }
+  details.more { margin-top: 18px; }
+  details.more > summary { cursor: pointer; color: var(--ink-2); font-weight: 550; padding: 6px 2px; width: fit-content; }
+  .more-body { display: grid; gap: 14px; margin-top: 8px; }
+  .more-body h3 { font-size: 14px; margin: 0; padding: 12px 16px 0; }
+  .more-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px 16px; }
+  .mail { padding: 12px 16px; border-top: 1px solid var(--line); }
+  .mail .body { white-space: pre-wrap; color: var(--ink-2); font-size: 13.5px; margin-top: 4px; overflow-wrap: anywhere; }
+  .more-body td .button, .more-body td button { min-height: 34px; padding: 4px 11px; font-size: 13.5px; }
 
-  @media (max-width: 900px) {
-    .layout { grid-template-columns: minmax(0, 1fr); padding: 16px; }
-    .layout > section { min-width: 0; }
-    .phone { position: static; height: 640px; }
+  .assistant { position: sticky; top: 16px; display: flex; flex-direction: column; height: calc(100vh - 100px); min-height: 480px; max-height: 760px; overflow: hidden; }
+  .a-head { display: flex; align-items: center; gap: 8px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  .a-head h2 { font-size: 16px; margin: 0; flex: 1; }
+  .thread { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 8px; background: var(--bg); }
+  .bubble { max-width: 92%; padding: 9px 12px; border-radius: 12px; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; background: var(--surface); border: 1px solid var(--line); align-self: flex-start; }
+  .bubble.owner { align-self: flex-end; background: var(--accent-soft); border-color: transparent; }
+  .bubble.ask { border-color: var(--accent); }
+  .bubble blockquote { margin: 6px 0; padding: 4px 8px; border-left: 3px solid var(--line); color: var(--ink-2); font-size: 13px; white-space: pre-wrap; }
+  .bubble em { color: var(--ink-3); font-size: 13px; font-style: normal; }
+  .btnrow { display: flex; gap: 6px; margin-top: 8px; }
+  .btnrow button { flex: 1; min-height: 38px; }
+  .btnrow button:first-child { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .btnrow button.undo { background: var(--surface); color: var(--ink); border-color: var(--line); }
+  .done { margin-top: 6px; }
+  .chips { display: flex; gap: 6px; padding: 10px 12px 0; }
+  .chips button { border-radius: 999px; font-size: 13px; min-height: 32px; padding: 2px 12px; }
+  .composer { display: flex; gap: 8px; padding: 10px 12px 12px; }
+
+  dialog { border: none; padding: 0; border-radius: 16px; width: min(520px, calc(100vw - 32px)); background: var(--surface); color: var(--ink); box-shadow: 0 24px 64px rgba(0,0,0,.25); }
+  dialog::backdrop { background: rgba(15, 22, 18, .45); }
+  .d-head { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px 4px; }
+  .d-head h2 { font-size: 19px; margin: 0; }
+  #invform { display: grid; gap: 14px; padding: 12px 20px 20px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  #invform details summary { cursor: pointer; color: var(--ink-2); font-weight: 550; }
+  #invform details[open] > div { display: grid; gap: 12px; margin-top: 12px; }
+  .sent { padding: 8px 20px 20px; display: grid; gap: 12px; }
+  .sent .link { display: flex; gap: 8px; }
+  .sent .link input { flex: 1; min-width: 0; font-size: 13px; }
+
+  @media (max-width: 960px) {
+    .layout { grid-template-columns: minmax(0, 1fr); padding: 18px 16px 40px; }
+    .assistant { position: static; height: 560px; }
   }
   @media (max-width: 560px) {
-    form.new { grid-template-columns: 1fr; }
-    form.new .row3 { grid-template-columns: 1fr; }
-    form.new .row3 .span2 { grid-column: auto; }
-    .clock .btns { width: 100%; }
-    .clock .btns button { flex: 1; padding: 6px 4px; }
+    .stats { grid-template-columns: 1fr; }
+    .stat { display: flex; justify-content: space-between; align-items: center; }
+    .two { grid-template-columns: 1fr; }
   }
 </style>
 </head>
 <body>
 <header class="topbar">
-  <div class="brand"><span class="mark" aria-hidden="true"></span>Living Invoice <span class="tag">demo</span></div>
-  <div class="hint">Left: the business's own tools, simulated. Right: the only screen the owner ever sees.</div>
-  <nav>
-    <a href="/ledger"><button>Money ledger</button></a>
-    <a href="/audit"><button>Audit log and connections</button></a>
-    <button id="reset">Reset demo</button>
+  <a class="brand" href="/"><img src="/logo.svg" alt="" width="26" height="26">Living Pay</a>
+  <nav class="mainnav" aria-label="Main">
+    <a href="/" aria-current="page">Invoices</a>
+    <a href="/ledger">Ledger</a>
+    <a href="/audit">Settings</a>
   </nav>
 </header>
 
 <main class="layout">
-  <section aria-label="Business tools">
-    <p class="section-label">Kora Studio's tools <span class="faint" id="toolsnote">(sandbox)</span></p>
-    <div class="toast" id="toast" hidden></div>
-    <div class="card clock">
-      <div class="time"><small id="clocklabel">Simulated time</small><span id="now">…</span></div>
-      <div class="btns" id="realbtns" hidden>
-        <button id="syncnow">Sync Google now</button>
-      </div>
-      <div class="btns" id="simbtns">
-        <button data-advance="1">+1 hour</button>
-        <button data-advance="24">+1 day</button>
-        <button data-advance="168">+1 week</button>
-      </div>
+  <section aria-label="Invoices">
+    <div class="head">
+      <h1>Invoices</h1>
+      <button class="primary" id="newinv">New invoice</button>
     </div>
+    <div class="toast" id="toast" role="alert" hidden></div>
+    <div class="stats" id="stats"></div>
+    <div class="card" id="list"></div>
 
-    <div class="card">
-      <div class="tabs" role="tablist">
-        <button role="tab" data-tab="calendar" aria-selected="true">Calendar</button>
-        <button role="tab" data-tab="accounting" aria-selected="false">Accounting</button>
-        <button role="tab" data-tab="invoice" aria-selected="false">New invoice</button>
-        <button role="tab" data-tab="outbox" aria-selected="false">Sent to clients <span class="count" id="outcount">0</span></button>
-        <button role="tab" data-tab="new" aria-selected="false">New appointment</button>
-      </div>
-      <div class="panel" id="tab-calendar"></div>
-      <div class="panel" id="tab-accounting" hidden></div>
-      <div class="panel" id="tab-outbox" hidden></div>
-      <div class="panel" id="tab-invoice" hidden>
-        <form class="new" id="invform">
-          <label class="full">Client<select name="contact_id" id="invclient"></select></label>
-          <div class="full newclient" hidden>
-            <div class="row3">
-              <label>Name<input name="new_name" placeholder="Ada Lovelace"></label>
-              <label>Company<input name="new_company" placeholder="Optional"></label>
-              <label>Email<input name="new_email" type="email" placeholder="ada@example.com"></label>
-            </div>
+    <details class="more" id="more">
+      <summary>More</summary>
+      <div class="more-body">
+        <div class="card" id="clock" hidden>
+          <div class="more-actions">
+            <div style="flex:1;min-width:180px"><div class="faint">Practice clock</div><strong id="now">…</strong></div>
+            <button data-advance="24">+1 day</button>
+            <button data-advance="168">+1 week</button>
           </div>
-          <label class="full">What it's for<input name="title" placeholder="Logo design, 3 concepts" required maxlength="200"></label>
-          <label>Amount<input name="amount" type="number" min="1" step="0.01" placeholder="500" required></label>
-          <label>Due in (days)<input name="due_days" type="number" min="1" max="120" value="14" required></label>
-          <label>Subcontractor's share<input name="sub_share" type="number" min="0" step="0.01" value="0"></label>
-          <label>Paid to<select name="sub_id" id="invsub"></select></label>
-          <div class="full newsub" hidden>
-            <div class="row3">
-              <label>Name<input name="new_sub_name" placeholder="Femi Adeyemi"></label>
-              <label class="span2">PayPal email<input name="new_sub_email" type="email" placeholder="femi@example.com"></label>
-            </div>
-          </div>
-          <div class="full"><button class="primary" type="submit">Send invoice</button></div>
-        </form>
-        <div class="note">The invoice goes out straight away as a PayPal invoice with its own client page, where the client can ask questions, arrange a plan or pay. The subcontractor's share is paid out with PayPal once the invoice is paid in full. You can undo from the phone.</div>
+        </div>
+        <div class="card" id="jobs" hidden></div>
+        <div class="card" id="emails"></div>
+        <div><button class="ghost" id="reset">Start over with fresh data</button></div>
       </div>
-      <div class="panel" id="tab-new" hidden>
-        <form class="new" id="newform">
-          <label class="full">Client<select name="contact_id" id="contactsel"></select></label>
-          <label class="full">What<input name="title" value="Consultation" required></label>
-          <label>When<input name="start" type="datetime-local" id="startinput" required></label>
-          <label>Amount<input name="amount" type="number" min="0" step="1" value="300"></label>
-          <div class="full"><button class="primary" type="submit">Add to calendar</button></div>
-        </form>
-        <div class="note" id="newnote"></div>
-      </div>
-    </div>
+    </details>
   </section>
 
-  <section aria-label="Owner's phone">
-    <div class="phone">
-      <div class="phone-head">
-        <div class="avatar"><span></span></div>
-        <div><div class="name">Living Invoice</div><div class="status" id="pstatus">watching 5 tools</div></div>
-        <span class="badge" id="pending" hidden></span>
-      </div>
-      <div class="thread" id="thread" aria-live="polite"></div>
-      <div class="chips">
-        <button data-say="yes">yes</button>
-        <button data-say="no">no</button>
-        <button data-say="undo">undo</button>
-        <button data-say="summary">summary</button>
-        <button data-say="what are you doing">what are you doing</button>
-        <button data-say="help">help</button>
-      </div>
-      <form class="composer" id="composer">
-        <input id="msg" autocomplete="off" placeholder="Message Living Invoice" aria-label="Message Living Invoice">
-        <button class="primary" type="submit">Send</button>
-      </form>
+  <section class="card assistant" aria-label="Assistant">
+    <div class="a-head"><h2>Assistant</h2><span class="pill warn" id="pending" hidden></span></div>
+    <div class="thread" id="thread" aria-live="polite"></div>
+    <div class="chips">
+      <button data-say="rules">My rules</button>
+      <button data-say="summary">Summary</button>
+      <button data-say="help">Help</button>
     </div>
+    <form class="composer" id="composer">
+      <input id="msg" autocomplete="off" placeholder="Type a message" aria-label="Message your assistant">
+      <button class="primary" type="submit">Send</button>
+    </form>
   </section>
 </main>
 
+<dialog id="invdialog" aria-labelledby="invtitle">
+  <div class="d-head">
+    <h2 id="invtitle">New invoice</h2>
+    <button class="ghost" id="closeinv" aria-label="Close">Close</button>
+  </div>
+  <form id="invform">
+    <label>Who is it for?<select name="contact_id" id="invclient"></select></label>
+    <div class="two newclient" hidden>
+      <label>Name<input name="new_name" autocomplete="off"></label>
+      <label>Email<input name="new_email" type="email" autocomplete="off"></label>
+    </div>
+    <label>What is it for?<input name="title" required maxlength="200" placeholder="Logo design"></label>
+    <div class="two">
+      <label>Amount<input name="amount" type="number" min="1" step="0.01" inputmode="decimal" required placeholder="500"></label>
+      <label>Due in<select name="due_days"><option value="7">7 days</option><option value="14" selected>14 days</option><option value="30">30 days</option></select></label>
+    </div>
+    <details>
+      <summary>Share it with a subcontractor (optional)</summary>
+      <div>
+        <div class="two">
+          <label>Their share<input name="sub_share" type="number" min="0" step="0.01" value="0"></label>
+          <label>Paid to<select name="sub_id" id="invsub"></select></label>
+        </div>
+        <div class="two newsub" hidden>
+          <label>Name<input name="new_sub_name" autocomplete="off"></label>
+          <label>PayPal email<input name="new_sub_email" type="email" autocomplete="off"></label>
+        </div>
+        <span class="help">Paid through PayPal once the invoice is paid in full. You'll be asked first.</span>
+      </div>
+    </details>
+    <input type="hidden" name="new_company" value="">
+    <button class="primary" type="submit">Send invoice</button>
+  </form>
+  <div class="sent" id="invsent" hidden>
+    <p style="margin:0" id="sentmsg"></p>
+    <div class="link">
+      <input id="sentlink" readonly aria-label="Invoice link">
+      <button id="copylink">Copy</button>
+    </div>
+    <span class="help">Your client can ask this invoice questions, arrange a plan and pay.</span>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <a class="button" id="sentopen" target="_blank" rel="noopener">See what they see</a>
+      <button class="primary" id="sentdone" style="margin-left:auto">Done</button>
+    </div>
+  </div>
+</dialog>
+
 <script>
 const $ = (s) => document.querySelector(s);
-let last = "";
-let S = null;
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let S = null, last = "";
 
-const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const money = (n) => S.currency + Math.round(n).toLocaleString("en-US");
-const when = (iso) => new Date(iso).toLocaleString("en-GB", { weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
-const day = (iso) => new Date(iso).toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short" });
-const hm = (iso) => iso.slice(11, 16);
+function money(x) {
+  const v = Math.round(Number(x || 0) * 100) / 100;
+  const t = Number.isInteger(v) ? v.toLocaleString("en-US") : v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return (S ? S.currency : "$") + t;
+}
+const day = (iso) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+const clientLink = (i) => location.origin + "/i/" + encodeURIComponent(i.token);
 
 function md(text) {
   const lines = esc(text).split("\n");
@@ -221,123 +211,106 @@ async function api(path, body) {
   });
   const data = await r.json();
   if (!r.ok) {
-    const t = $("#toast");
-    t.textContent = data.error || "Something went wrong";
-    t.hidden = false;
-    clearTimeout(api.timer);
-    api.timer = setTimeout(() => (t.hidden = true), 6000);
-    return fetch("/api/state").then((x) => x.json());
+    showError(data.error || "Something went wrong");
+    return { failed: true, state: await fetch("/api/state").then((x) => x.json()) };
   }
   return data;
 }
+function showError(text) {
+  const t = $("#toast");
+  t.textContent = text; t.hidden = false;
+  clearTimeout(showError.timer);
+  showError.timer = setTimeout(() => (t.hidden = true), 7000);
+}
 
 function render(state) {
+  if (state.failed) state = state.state;
   const json = JSON.stringify(state);
   if (json === last) return;
   last = json;
   S = state;
-  $("#now").textContent = state.now_nice;
-  const real = state.clock === "real", g = state.google;
-  $("#clocklabel").textContent = real ? "Real time" : "Simulated time";
-  $("#realbtns").hidden = !g.connected;
-  $("#simbtns").hidden = real;
-  $("#toolsnote").textContent = g.connected ? `(Gmail and Google Calendar: ${g.account}${g.live_email ? "" : ", test mode"})` : "(sandbox)";
-  $("#pstatus").textContent = g.connected ? "watching Gmail, Google Calendar and 2 more" : "watching 5 tools";
-  $("#newform").hidden = !!g.connected;
-  $("#newnote").textContent = g.connected ? "Google Calendar is connected, so add appointments there. Living Invoice picks them up on its next sync."
-    : "Adding an appointment within 24 hours triggers the reminder automation straight away.";
-  renderCalendar(); renderAccounting(); renderOutbox(); renderChat();
-  fillInvoiceForm(state);
-  const sel = $("#contactsel");
-  if (!sel.options.length) {
-    sel.innerHTML = state.contacts.map((c) => `<option value="${c.id}">${esc(c.name)}${c.company ? " · " + esc(c.company) : ""}</option>`).join("");
-  }
+  renderStats(); renderList(); renderMore(); renderChat(); fillForm();
 }
 
-function statusPill(s) {
-  const map = { scheduled: "", completed: "good", cancelled: "bad", paid: "good", sent: "", void: "bad", unclaimed: "", success: "good", succeeded: "good", returned: "bad", failed: "bad" };
-  return `<span class="pill ${map[s] || ""}">${esc(s)}</span>`;
+function renderStats() {
+  const open = S.invoices.filter((i) => i.status === "sent");
+  const tiles = [
+    ["Waiting to be paid", money(open.reduce((a, i) => a + i.balance, 0))],
+    ["Collected", money(S.invoices.filter((i) => i.status !== "void").reduce((a, i) => a + (i.amount_paid || 0), 0))],
+    ["Needs your OK", S.pending],
+  ];
+  $("#stats").innerHTML = tiles.map(([l, v]) => `<div class="card stat"><div class="l">${l}</div><div class="v">${esc(v)}</div></div>`).join("");
 }
 
-function renderCalendar() {
-  const rows = S.events.map((e) => `
-    <tr>
-      <td><div>${esc(when(e.start))}</div></td>
-      <td><div class="who">${esc(e.title)}${e.source === "google" ? ' <span class="pill">Google</span>' : ""}</div><div class="sub">${e.name ? esc(e.name) : "no client guest"}${e.company ? " · " + esc(e.company) : ""}${e.sub_name && e.sub_share ? ` · ${esc(e.sub_name)} gets ${money(e.sub_share)}` : ""}</div></td>
-      <td class="num">${e.amount ? money(e.amount) : "—"}</td>
-      <td>${statusPill(e.status)}</td>
-      <td><div class="actions">${e.status === "scheduled" ? `
-        <button class="small primary" data-act="event/complete" data-id="${e.id}">Mark done</button>
-        ${e.source === "google" ? "" : `<button class="small" data-act="event/cancel" data-id="${e.id}">Cancel</button>`}` : ""}</div></td>
-    </tr>`).join("");
-  $("#tab-calendar").innerHTML = `<table><thead><tr><th>When</th><th>Appointment</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+function statusOf(i) {
+  if (i.status === "paid") return `<span class="pill good">Paid</span>`;
+  if (i.status === "void") return `<span class="pill">Cancelled</span>`;
+  if (i.days_overdue > 0) return `<span class="pill warn">${i.days_overdue} ${i.days_overdue === 1 ? "day" : "days"} overdue</span>`;
+  if (i.amount_paid > 0) return `<span class="pill">${money(i.balance)} left</span>`;
+  return `<span class="pill">Due ${esc(day(i.due_at))}</span>`;
 }
 
-function renderAccounting() {
-  const rows = S.invoices.map((i) => {
-    let st = statusPill(i.status);
-    if (i.status === "sent" && i.days_overdue > 0) st = `<span class="pill warn">${i.days_overdue} days overdue</span>`;
-    else if (i.status === "sent") st = `<span class="pill">due ${esc(day(i.due_at))}</span>`;
-    return `<tr>
-      <td><div class="who">${esc(i.number)}</div><div class="sub">issued ${esc(day(i.issued_at))}</div></td>
-      <td><div>${esc(i.name)}</div><div class="sub">${esc(i.company || "")}</div></td>
-      <td class="num">${money(i.amount)}</td>
-      <td>${st}</td>
-      <td><div class="actions">${i.token ? `<a class="small" href="/i/${encodeURIComponent(i.token)}" target="_blank" rel="noopener">Client view</a>` : ""}
-        ${i.status === "sent" ? `<button class="small" data-act="invoice/paid" data-id="${i.id}">Record payment</button>` : ""}</div></td>
-    </tr>`;
-  }).join("");
-  const payouts = (S.payouts || []).map((p) => `<tr>
-      <td><div class="who">${esc(p.name)}</div><div class="sub">${esc(p.email)}</div></td>
-      <td>${esc(p.number)}</td>
-      <td class="num">${money(p.amount)}</td>
-      <td>${statusPill(p.status)}</td><td></td></tr>`).join("");
-  $("#tab-accounting").innerHTML = `<table><thead><tr><th>Invoice</th><th>Client</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>
-    ${payouts ? `<h3 class="sub" style="margin:18px 0 6px">Payouts to subcontractors</h3>
-    <table><thead><tr><th>Subcontractor</th><th>For</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead><tbody>${payouts}</tbody></table>` : ""}`;
-}
-
-function renderOutbox() {
-  $("#outcount").textContent = S.outbox.length;
-  if (!S.outbox.length) {
-    $("#tab-outbox").innerHTML = `<div class="empty">Nothing sent to clients yet. Emails and WhatsApp messages Living Invoice sends appear here.</div>`;
+function renderList() {
+  if (!S.invoices.length) {
+    $("#list").innerHTML = `<div class="empty"><h2>No invoices yet</h2><p>Send your first one. It takes about a minute.</p><button class="primary" data-newinv="1">New invoice</button></div>`;
     return;
   }
-  $("#tab-outbox").innerHTML = S.outbox.map((o) => `
-    <div class="msg-item">
-      <div class="msg-head">
-        <span class="pill ${o.channel === "whatsapp" ? "good" : ""}">${o.channel === "whatsapp" ? "WhatsApp" : "Email"}</span>
-        <span class="who">${esc(o.name)}</span><span class="sub">${esc(o.to_addr)}</span>
-        <span class="sub" style="margin-left:auto">${esc(when(o.sent_at))}</span>
+  const payouts = {};
+  (S.payouts || []).forEach((p) => { if (p.status !== "cancelled") payouts[p.number] = p; });
+  $("#list").innerHTML = S.invoices.map((i) => {
+    const paid = payouts[i.number];
+    return `<div class="row">
+      <div><div class="who">${esc(i.company || i.name)}</div><div class="sub">${esc(i.title || "Services")} · ${esc(i.number)}${paid ? ` · ${esc(paid.name)} paid ${money(paid.amount)}` : ""}</div></div>
+      <div class="amt">${money(i.total)}</div>
+      <div>${statusOf(i)}</div>
+      <div class="acts">
+        ${i.token ? `<a class="button" href="/i/${encodeURIComponent(i.token)}" target="_blank" rel="noopener">Open</a>
+        <button data-copy="${esc(clientLink(i))}">Copy link</button>` : ""}
+        ${i.status === "sent" ? `<button class="ghost" data-markpaid="${i.id}">Paid another way?</button>` : ""}
       </div>
-      ${o.subject ? `<div class="who" style="font-size:13px">${esc(o.subject)}</div>` : ""}
-      ${o.note ? `<div class="sub" style="margin-bottom:4px">${esc(o.note)}</div>` : ""}
-      <div class="msg-body">${esc(o.body)}</div>
-    </div>`).join("");
+    </div>`;
+  }).join("");
 }
 
-const STATUS_WORD = { executed: ["Done", "good"], skipped: ["Skipped", ""], cancelled: ["Withdrawn", ""], undone: ["Undone", "warn"], failed: ["Failed", "bad"] };
+function renderMore() {
+  const practice = S.clock !== "real";
+  $("#clock").hidden = !practice;
+  $("#now").textContent = S.now_nice;
+  const jobs = S.events.filter((e) => e.status === "scheduled" && e.amount);
+  $("#jobs").hidden = !jobs.length;
+  $("#jobs").innerHTML = `<h3>Jobs on your calendar</h3><table><tbody>${jobs.map((e) => `<tr>
+      <td><strong>${esc(e.title)}</strong><div class="faint">${esc(e.name || "")}</div></td>
+      <td class="num">${money(e.amount)}</td>
+      <td class="num"><button data-act="event/complete" data-id="${e.id}">Finished: bill it</button></td></tr>`).join("")}</tbody></table>`;
+  $("#emails").innerHTML = `<h3 style="padding-bottom:12px">Emails sent</h3>` + (S.outbox.length ? S.outbox.map((o) => `<div class="mail">
+      <strong>${esc(o.subject || "Message")}</strong> <span class="faint">to ${esc(o.to_addr)}</span>
+      <div class="body">${esc(o.body)}</div></div>`).join("") : `<div class="mail faint">Nothing yet.</div>`);
+}
+
+const STATUS_WORD = { executed: ["Done", "good"], skipped: ["Declined", ""], undone: ["Undone", ""], cancelled: ["Cancelled", ""],
+  failed: ["Failed", "bad"], countered: ["Countered", ""], observed: ["Noted", ""] };
 
 function renderChat() {
   const th = $("#thread");
   const atBottom = th.scrollHeight - th.scrollTop - th.clientHeight < 60;
   th.innerHTML = S.chat.map((m) => {
-    let extra = "";
+    let extra = "", asking = false;
     if (m.buttons && m.buttons.length) {
       const live = m.buttons.filter((b) => (b.label === "Undo" ? m.pstatus === "executed" : m.pstatus === "pending"));
+      asking = m.pstatus === "pending" && live.length > 0;
       if (live.length) {
-        extra = `<div class="btnrow">${live.map((b) => `<button data-say="${esc(b.send)}">${esc(b.label)}</button>`).join("")}</div>`;
+        extra = `<div class="btnrow">${live.map((b) => `<button class="${b.label === "Undo" ? "undo" : ""}" data-say="${esc(b.send)}">${esc(b.label)}</button>`).join("")}</div>`;
       } else if (STATUS_WORD[m.pstatus] && m.buttons[0].label !== "Undo") {
         const [w, cls] = STATUS_WORD[m.pstatus];
         extra = `<div class="done"><span class="pill ${cls}">${w}</span></div>`;
       }
     }
-    return `<div class="bubble ${m.sender === "owner" ? "owner" : "bot"}">${md(m.body)}${extra}<div class="t">${hm(m.at)}</div></div>`;
+    return `<div class="bubble ${m.sender === "owner" ? "owner" : ""} ${asking ? "ask" : ""}">${md(m.body)}${extra}</div>`;
   }).join("");
   if (atBottom || th.dataset.init !== "1") { th.scrollTop = th.scrollHeight; th.dataset.init = "1"; }
   const b = $("#pending");
   b.hidden = !S.pending;
-  b.textContent = S.pending + " waiting";
+  b.textContent = S.pending + " waiting for you";
 }
 
 async function say(text) {
@@ -345,24 +318,81 @@ async function say(text) {
   const th = $("#thread"); th.scrollTop = th.scrollHeight;
 }
 
+function fillForm() {
+  const key = S.contacts.length + "/" + S.subcontractors.length;
+  if (fillForm.key === key) return;
+  fillForm.key = key;
+  const c = $("#invclient"), keepC = c.value, s = $("#invsub"), keepS = s.value;
+  c.innerHTML = S.contacts.map((x) => `<option value="${x.id}">${esc(x.name)}${x.company ? " · " + esc(x.company) : ""}</option>`).join("")
+    + `<option value="new">+ New client</option>`;
+  s.innerHTML = `<option value="">Choose…</option>` + S.subcontractors.map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join("")
+    + `<option value="new">+ New subcontractor</option>`;
+  if (keepC) c.value = keepC;
+  if (keepS) s.value = keepS;
+  toggleExtras();
+}
+function toggleExtras() {
+  const nc = $("#invclient").value === "new", ns = $("#invsub").value === "new";
+  document.querySelector("#invform .newclient").hidden = !nc;
+  document.querySelector("#invform .newsub").hidden = !ns;
+  $("#invform [name=new_name]").required = nc;
+  $("#invform [name=new_email]").required = nc;
+  $("#invform [name=new_sub_name]").required = ns;
+  $("#invform [name=new_sub_email]").required = ns;
+}
+$("#invclient").addEventListener("change", toggleExtras);
+$("#invsub").addEventListener("change", toggleExtras);
+
+function openInvoiceForm() {
+  $("#invform").hidden = false; $("#invsent").hidden = true;
+  $("#invtitle").textContent = "New invoice";
+  fillForm.key = null; fillForm();
+  $("#invdialog").showModal();
+}
+$("#closeinv").addEventListener("click", () => $("#invdialog").close());
+$("#sentdone").addEventListener("click", () => $("#invdialog").close());
+$("#copylink").addEventListener("click", async (e) => {
+  const v = $("#sentlink").value; await copy(v, e.target);
+});
+async function copy(text, btn) {
+  try { await navigator.clipboard.writeText(text); } catch (err) { /* fall through: the link stays visible */ }
+  const was = btn.textContent; btn.textContent = "Copied"; setTimeout(() => (btn.textContent = was), 1500);
+}
+
+$("#invform").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = e.target.querySelector("button[type=submit]");
+  btn.disabled = true; btn.textContent = "Sending…";
+  const before = S.invoices.length;
+  const res = await api("/api/sandbox/invoice/new", Object.fromEntries(new FormData(e.target)));
+  btn.disabled = false; btn.textContent = "Send invoice";
+  render(res);
+  if (res.failed) { $("#invdialog").close(); return; }
+  if (S.invoices.length > before) {
+    const inv = S.invoices[0];
+    e.target.reset();
+    $("#invform").hidden = true; $("#invsent").hidden = false;
+    $("#invtitle").textContent = "Invoice sent";
+    $("#sentmsg").textContent = `${inv.number} for ${money(inv.total)} is on its way to ${inv.name}.`;
+    $("#sentlink").value = clientLink(inv);
+    $("#sentopen").href = clientLink(inv);
+  }
+});
+
 document.addEventListener("click", async (e) => {
   const t = e.target.closest("button");
   if (!t) return;
-  if (t.dataset.tab) {
-    document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-selected", b === t));
-    document.querySelectorAll(".panel").forEach((p) => (p.hidden = p.id !== "tab-" + t.dataset.tab));
-  } else if (t.id === "syncnow") {
-    t.disabled = true;
-    render(await api("/api/connections/google/sync", {}));
-    t.disabled = false;
-  } else if (t.dataset.advance) {
-    render(await api("/api/sandbox/clock/advance", { hours: +t.dataset.advance }));
-  } else if (t.dataset.act) {
-    render(await api("/api/sandbox/" + t.dataset.act, { id: +t.dataset.id }));
-  } else if (t.dataset.say) {
-    say(t.dataset.say);
-  } else if (t.id === "reset") {
-    if (confirm("Reset the demo to its starting data?")) { last = ""; $("#thread").dataset.init = ""; render(await api("/api/reset", {})); }
+  if (t.id === "newinv" || t.dataset.newinv) openInvoiceForm();
+  else if (t.dataset.copy) copy(t.dataset.copy, t);
+  else if (t.dataset.markpaid) {
+    if (confirm("Mark this invoice as fully paid?\n\nOnly use this if the money reached you outside PayPal, like a bank transfer or cash. It doesn't collect anything."))
+      render(await api("/api/sandbox/invoice/paid", { id: +t.dataset.markpaid }));
+  }
+  else if (t.dataset.advance) render(await api("/api/sandbox/clock/advance", { hours: +t.dataset.advance }));
+  else if (t.dataset.act) render(await api("/api/sandbox/" + t.dataset.act, { id: +t.dataset.id }));
+  else if (t.dataset.say) say(t.dataset.say);
+  else if (t.id === "reset") {
+    if (confirm("Delete everything here and start over?")) { last = ""; fillForm.key = null; $("#thread").dataset.init = ""; render(await api("/api/reset", {})); }
   }
 });
 
@@ -374,63 +404,9 @@ $("#composer").addEventListener("submit", (e) => {
   say(v);
 });
 
-function fillInvoiceForm(state) {
-  const key = state.contacts.length + "/" + state.subcontractors.length;
-  if (fillInvoiceForm.key === key) return;
-  fillInvoiceForm.key = key;
-  const c = $("#invclient"), keepC = c.value, s = $("#invsub"), keepS = s.value;
-  c.innerHTML = state.contacts.map((x) => `<option value="${x.id}">${esc(x.name)}${x.company ? " · " + esc(x.company) : ""}</option>`).join("")
-    + `<option value="new">+ New client…</option>`;
-  s.innerHTML = `<option value="">Nobody</option>` + state.subcontractors.map((x) => `<option value="${x.id}">${esc(x.name)}</option>`).join("")
-    + `<option value="new">+ New subcontractor…</option>`;
-  if (keepC) c.value = keepC;
-  if (keepS) s.value = keepS;
-  toggleInvoiceExtras();
-}
-
-function toggleInvoiceExtras() {
-  const newClient = $("#invclient").value === "new", newSub = $("#invsub").value === "new";
-  document.querySelector("#invform .newclient").hidden = !newClient;
-  document.querySelector("#invform .newsub").hidden = !newSub;
-  $("#invform [name=new_name]").required = newClient;
-  $("#invform [name=new_email]").required = newClient;
-  $("#invform [name=new_sub_name]").required = newSub;
-  $("#invform [name=new_sub_email]").required = newSub;
-}
-$("#invclient").addEventListener("change", toggleInvoiceExtras);
-$("#invsub").addEventListener("change", toggleInvoiceExtras);
-
-$("#invform").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const btn = e.target.querySelector("button[type=submit]");
-  btn.disabled = true;
-  const before = S ? S.invoices.length : 0;
-  const state = await api("/api/sandbox/invoice/new", Object.fromEntries(new FormData(e.target)));
-  btn.disabled = false;
-  render(state);
-  if (state.invoices.length > before) {
-    e.target.reset();
-    fillInvoiceForm.key = null; fillInvoiceForm(state);
-    document.querySelector('[data-tab="accounting"]').click();
-  }
-});
-
-$("#newform").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const f = new FormData(e.target);
-  render(await api("/api/sandbox/event/create", Object.fromEntries(f)));
-  document.querySelector('[data-tab="calendar"]').click();
-});
-
-async function poll() {
-  try { render(await api("/api/state")); } catch (err) { /* server restarting */ }
-  if (S && !$("#startinput").value) {
-    const d = new Date(S.now); d.setHours(d.getHours() + 5);
-    $("#startinput").value = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-  }
-}
+async function poll() { try { render(await api("/api/state")); } catch (err) { /* server restarting */ } }
 poll();
-setInterval(poll, 2000);
+setInterval(() => { if (document.visibilityState === "visible" && !$("#invdialog").open) poll(); }, 3000);
 </script>
 </body>
 </html>

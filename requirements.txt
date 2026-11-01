@@ -1,0 +1,3 @@
+# The app itself needs only Python 3.9+. These switch on optional parts.
+anthropic>=0.125      # Claude, the AI negotiator
+cryptography          # encrypted token storage for Gmail

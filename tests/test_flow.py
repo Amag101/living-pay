@@ -10,8 +10,8 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-os.environ["INVISIBLE_DB"] = os.path.join(tempfile.mkdtemp(), "test.db")
-os.environ["INVISIBLE_LLM"] = "off"
+os.environ["LIVING_DB"] = os.path.join(tempfile.mkdtemp(), "test.db")
+os.environ["LIVING_LLM"] = "off"
 
 import server as s  # noqa: E402
 

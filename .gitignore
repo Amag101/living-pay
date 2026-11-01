@@ -1,6 +1,6 @@
 google_client.json
-invisible.db
-invisible.db-*
+*.db
+*.db-*
 __pycache__/
 .env
 .env.*

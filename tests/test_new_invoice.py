@@ -15,7 +15,7 @@ from fake_paypal import FAKE  # noqa: E402
 
 _server, BASE = fake_paypal.serve()
 os.environ.update({
-    "INVISIBLE_DB": os.path.join(tempfile.mkdtemp(), "test.db"), "INVISIBLE_LLM": "off",
+    "LIVING_DB": os.path.join(tempfile.mkdtemp(), "test.db"), "LIVING_LLM": "off",
     "PAYPAL_API_BASE": BASE, "PAYPAL_CLIENT_ID": "cid", "PAYPAL_CLIENT_SECRET": "secret",
     "PAYPAL_WEBHOOK_ID": FAKE.webhook_id, "PUBLIC_URL": "https://living.example",
 })

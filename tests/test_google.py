@@ -141,9 +141,9 @@ threading.Thread(target=GOOGLE.serve_forever, daemon=True).start()
 BASE = "http://127.0.0.1:%d" % GOOGLE.server_address[1]
 
 os.environ.update({
-    "INVISIBLE_DB": os.path.join(TMP, "test.db"),
-    "INVISIBLE_LLM": "off",
-    "INVISIBLE_KEY_FILE": os.path.join(TMP, "keys", "master.key"),
+    "LIVING_DB": os.path.join(TMP, "test.db"),
+    "LIVING_LLM": "off",
+    "LIVING_KEY_FILE": os.path.join(TMP, "keys", "master.key"),
     "GOOGLE_CLIENT_ID": "test-client.apps.googleusercontent.com",
     "GOOGLE_CLIENT_SECRET": "test-secret",
     "GOOGLE_AUTH_URL": BASE + "/auth",
@@ -249,7 +249,7 @@ class GoogleFlow(unittest.TestCase):
         tok = s.get_vault().open("google", row["secret"])
         self.assertEqual(tok["refresh_token"], "rt-1")
         self.assertNotIn("id_token", tok)
-        key_file = os.environ["INVISIBLE_KEY_FILE"]
+        key_file = os.environ["LIVING_KEY_FILE"]
         self.assertEqual(stat.S_IMODE(os.stat(key_file).st_mode), 0o600)
         with open(key_file, "rb") as f:
             master = f.read().strip()
