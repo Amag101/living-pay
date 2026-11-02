@@ -4,6 +4,7 @@
 """
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -103,6 +104,13 @@ class Login(unittest.TestCase):
             self.assertEqual(self.hit("/login", {"password": "nope"})[0], 401)
         self.assertEqual(self.hit("/login", {"password": PASSWORD})[0], 429)
 
+    def test_a_stranger_guessing_cannot_lock_out_anyone_else(self):
+        for _ in range(s.LOGIN_LIMIT[0]):
+            self.assertIsNone(s.check_login("nope", "1.2.3.4"))
+        with self.assertRaises(ValueError):
+            s.check_login(PASSWORD, "1.2.3.4")
+        self.assertEqual(s.check_login(PASSWORD, "5.6.7.8"), "owner")
+
     def test_refuses_to_go_public_without_a_password(self):
         keep = os.environ.pop("LIVING_OWNER_PASSWORD")
         os.environ["HOST"] = "0.0.0.0"
@@ -150,20 +158,26 @@ class JudgeLogin(Login):
         self.assertIn("tour", self.state(self.judge()))
         self.assertNotIn("tour", self.state(self.login()))
 
-    def test_judge_cannot_change_the_business_or_reset(self):
+    def test_judge_has_full_access_but_cannot_wipe_real_data_by_hand(self):
         cookie = self.judge()
-        for path in ("/api/settings/business", "/api/settings/discount_chip", "/api/reset"):
-            self.assertEqual(self.hit(path, {"name": "Hacked", "on": True}, cookie)[0], 403, path)
+        self.assertEqual(self.hit("/api/settings/business", {"name": "A Judge's Shop"}, cookie)[0], 200)
+        self.assertEqual(s.get_setting("business"), "A Judge's Shop")
+        self.hit("/api/settings/business", {"name": "Kora Studio"}, cookie)
 
     def test_a_judge_cookie_cannot_be_turned_into_an_owner_cookie(self):
         value = self.judge().split("=", 1)[1]
         forged = "living_owner=" + value.replace("judge.", "owner.", 1)
         self.assertEqual(self.hit("/api/state", cookie=forged)[0], 401)
 
-    def test_judge_and_strangers_cannot_refund(self):
-        for path in ("/api/refunds/send", "/api/refunds/decline"):
-            self.assertEqual(self.hit(path, {"invoice_id": 1, "amount": 1, "request_id": 1}, self.judge())[0], 403, path)
-            self.assertEqual(self.hit(path, {"invoice_id": 1, "amount": 1, "request_id": 1})[0], 401, path)
+    def test_judge_can_test_refunds_and_strangers_cannot(self):
+        cookie = self.judge()
+        self.hit("/api/tour/start", {}, cookie)
+        inv = s.q1("SELECT * FROM invoices WHERE tour=1")
+        s.demo_pay(inv["token"], "now")
+        body = {"invoice_id": inv["id"], "amount": 50, "key": "judge-test-0001"}
+        self.assertEqual(self.hit("/api/refunds/send", body)[0], 401)
+        self.assertEqual(self.hit("/api/refunds/send", body, cookie)[0], 200)
+        self.assertEqual(s.q1("SELECT refunded FROM invoices WHERE id=?", (inv["id"],))["refunded"], 50)
 
     def test_owner_cannot_use_tour_routes(self):
         self.assertEqual(self.hit("/api/tour/start", {}, self.login())[0], 404)
@@ -177,15 +191,49 @@ class JudgeLogin(Login):
         finally:
             os.environ.pop("LIVING_DEMO_BUYER_PASSWORD")
 
-    def test_tour_sends_a_sample_and_starting_again_replaces_it(self):
+    def test_starting_again_gives_a_fresh_app_and_keeps_a_copy(self):
         cookie = self.judge()
+        self.hit("/api/invoices/new", {"contact_id": "1", "title": "Mine", "amount": 10}, cookie)
+        self.assertTrue(s.q1("SELECT id FROM invoices WHERE title='Mine'"))
         self.assertEqual(self.hit("/api/tour/start", {}, cookie)[0], 200)
         first = self.state(cookie)["tour"]
         self.assertTrue(first["token"])
+        self.assertIsNone(s.q1("SELECT id FROM invoices WHERE title='Mine'"))
+        folder = os.path.dirname(s.DB_PATH)
+        copies = [f for f in os.listdir(folder) if "before-tour" in f]
+        self.assertTrue(copies)
+        keep = sqlite3.connect(os.path.join(folder, sorted(copies)[0]))
+        self.assertTrue(keep.execute("SELECT id FROM invoices WHERE title='Mine'").fetchall())
+        keep.close()
         self.hit("/api/tour/start", {}, cookie)
-        second = self.state(cookie)["tour"]
-        self.assertNotEqual(first["token"], second["token"])
-        self.assertEqual(s.q1("SELECT status FROM invoices WHERE token=?", (first["token"],))["status"], "void")
+        self.assertNotEqual(self.state(cookie)["tour"]["token"], first["token"])
+        self.assertEqual(self.hit("/api/state", cookie=cookie)[0], 200)  # still signed in
+
+    def test_tour_keeps_the_business_name(self):
+        cookie = self.judge()
+        s.set_setting("business", "MY presence")
+        self.hit("/api/tour/start", {}, cookie)
+        self.assertEqual(s.get_setting("business"), "MY presence")
+        s.set_setting("business", "Kora Studio")
+
+    def test_the_third_approval_in_the_tour_offers_earned_trust(self):
+        cookie = self.judge()
+        self.hit("/api/tour/start", {}, cookie)
+        inv = s.q1("SELECT * FROM invoices WHERE tour=1")
+        out = s.run_tool(inv, "propose_payment_plan", {"installments": 2, "first_amount": 200,
+                                                       "next_payment_date": None, "gap_days": 21})
+        self.assertEqual(out["result"], "sent_to_owner")
+        p = s.q1("SELECT id FROM proposals WHERE status='pending' ORDER BY id DESC")
+        self.hit("/api/chat", {"text": "approve #%d" % p["id"]}, cookie)
+        bot = s.q1("SELECT body FROM chat WHERE sender='bot' ORDER BY id DESC")["body"]
+        self.assertIn("approved the last 3", bot)
+        self.assertIn("at least 20%", bot)
+        self.assertEqual(s.ledger_state()["kpis"]["owner_decided"], 1)  # the two on file don't count as history
+        self.assertEqual([r for r in s.ledger_state()["rows"] if r["kind"] == "Request"].__len__(), 1)
+        self.hit("/api/chat", {"text": "yes"}, cookie)
+        self.assertEqual(s.mandate()["min_first_payment_pct"], 20)
+        self.hit("/api/tour/start", {}, cookie)
+        self.assertEqual(s.mandate()["min_first_payment_pct"], 30)
 
     def test_starting_again_restores_the_rules(self):
         cookie = self.judge()

@@ -1,21 +1,21 @@
-"""The guided tour for judges: a demo login with limits, a sample invoice and a way to show a missed payment."""
+"""The guided tour for judges: a fresh copy of the app, a sample invoice and a way to show a missed payment."""
 import json
 import os
+import sqlite3
 import time
 from datetime import date, datetime, timedelta
 
-from living_pay.config import LOCK
-from living_pay.store import ex, log, now, q, q1, set_setting
+from living_pay.config import DB_PATH, LOCK
+from living_pay.store import db, ex, get_setting, iso, log, now, q, q1, set_setting
 from living_pay.invoices import plan_of, plan_rows
 from living_pay.paypal_api import PayPalError
 from living_pay.connectors import connector
-from living_pay.automations import TEMPLATES, enqueue, process_queue, sweep_stale
-from living_pay.rules import GROWTH_LABELS
+from living_pay.automations import enqueue, process_queue
 from living_pay.owner import new_invoice
+from living_pay.setup import reset
 
 JUDGE_INVOICES_PER_DAY = 30
 JUDGE_CHATS = (60, 600)  # owner messages allowed, per this many seconds
-JUDGE_BLOCKED = ("/api/settings/business", "/api/settings/discount_chip", "/api/reset")
 _invoice_times, _chat_times = [], []
 
 
@@ -54,8 +54,30 @@ def tour_state():
             "buyer_email": buyer(), "buyer_password": os.environ.get("LIVING_DEMO_BUYER_PASSWORD")}
 
 
+def keep_a_copy():
+    """Starting again never loses anything: the old database stays on disk, next to the live one."""
+    copy = sqlite3.connect("%s-before-tour-%d" % (DB_PATH, time.time()))
+    db().backup(copy)
+    copy.close()
+
+
+def earlier_approvals(amount):
+    """Earned trust takes three approvals, so the sample starts with two already on file, as the tour says.
+    They belong to no invoice, so they count towards trust without appearing in the invoice's history."""
+    first = amount * 0.2
+    today = now().date()
+    terms = {"installments": 2, "gap_days": 14, "min_due": first, "due_at": (today + timedelta(days=14)).isoformat(),
+             "schedule": [{"due": today.isoformat(), "amount": first},
+                          {"due": (today + timedelta(days=14)).isoformat(), "amount": amount - first}]}
+    for _ in range(2):
+        ex("INSERT INTO offers(invoice_id,kind,offer,decision,reasons,terms,status,source,at,decided_at) "
+           "VALUES(0,'payment_plan',?,'ESCALATE',?,?,'approved','agent',?,?)",
+           (json.dumps({"kind": "payment_plan", "installments": 2, "first_amount": first, "gap_days": 14}),
+            json.dumps(["the first payment is under 30% of the balance"]), json.dumps(terms), iso(now()), iso(now())))
+
+
 def start_tour():
-    """A fresh start for each judge: default rules and automations, and a new sample invoice."""
+    """A fresh app for each judge, with full access: everything they can see or change is the demo's own."""
     judge_may_invoice()
     with LOCK:
         for inv in q("SELECT * FROM invoices WHERE tour=1 AND status='sent'"):
@@ -63,14 +85,11 @@ def start_tour():
                 connector("accounting").execute("void_invoice", {"invoice_id": inv["id"]})
             except (PayPalError, ValueError) as e:  # a part-paid invoice can't be cancelled on PayPal
                 print("tour: couldn't cancel %s: %s" % (inv["number"], e))
-        set_setting("mandate", "{}")
-        newest = q1("SELECT COALESCE(MAX(id),0) n FROM offers")["n"]
-        set_setting("growth_asked", json.dumps({key: newest for key in GROWTH_LABELS}))  # earlier approvals don't count
-        for t in TEMPLATES.values():
-            ex("UPDATE automations SET params=?, trust=?, enabled=1, streak=0 WHERE template=?",
-               (json.dumps(t.default_params), t.default_trust, t.key))
-        ex("UPDATE proposals SET status='cancelled' WHERE status='pending' AND kind='mandate'")
-        sweep_stale()
+        business = get_setting("business")
+        keep_a_copy()
+        reset()
+        set_setting("business", business)
+        earlier_approvals(1000)
         new_invoice({"contact_id": "new", "new_name": "Ruth Adeyemi", "new_email": buyer(),
                      "title": "Website redesign", "amount": 1000, "due_days": 14})
         inv = q1("SELECT * FROM invoices ORDER BY id DESC")

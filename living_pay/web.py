@@ -28,14 +28,14 @@ from living_pay.checkout import (
     calendar_file, capture_checkout, create_checkout, demo_pay, fake_approve, set_reminders,
 )
 from living_pay.paypal_events import paypal_webhook, scheduler
-from living_pay.tour import JUDGE_BLOCKED, judge_may_chat, judge_may_invoice, miss_payment, start_tour, tour_state
+from living_pay.tour import judge_may_chat, judge_may_invoice, miss_payment, start_tour, tour_state
 from living_pay.owner import advance_clock, mark_paid, new_invoice, owner_message, paypal_ask_on
 from living_pay.setup import init_db, reset
 
 
 SESSION_SECONDS = 14 * 86400
-LOGIN_LIMIT = (20, 600)  # wrong passwords allowed, per this many seconds
-_login_fails = []
+LOGIN_LIMIT = (20, 600)  # wrong passwords allowed from one address, per this many seconds
+_login_fails = {}
 
 
 def owner_password():
@@ -66,18 +66,20 @@ def signed_in(cookie_header):
     return parts[0] if hmac.compare_digest(morsel.value, session_value(int(parts[1]), parts[0])) else None
 
 
-def check_login(password):
-    """The role this password signs in as, or None. Too many wrong guesses lock everyone out for a few minutes."""
+def check_login(password, address="local"):
+    """The role this password signs in as, or None. Too many wrong guesses lock out that address only,
+    so a stranger guessing can't keep the owner or a judge from signing in."""
     now_s = time.time()
-    _login_fails[:] = [s for s in _login_fails if now_s - s < LOGIN_LIMIT[1]]
-    if len(_login_fails) >= LOGIN_LIMIT[0]:
+    for key in [k for k, stamps in _login_fails.items() if now_s - stamps[-1] >= LOGIN_LIMIT[1]]:
+        del _login_fails[key]
+    if len([s for s in _login_fails.get(address, []) if now_s - s < LOGIN_LIMIT[1]]) >= LOGIN_LIMIT[0]:
         raise ValueError("Too many tries. Please wait a few minutes.")
     given = str(password or "").encode()
     if hmac.compare_digest(given, owner_password().encode()):
         return "owner"
     if judge_password() and hmac.compare_digest(given, judge_password().encode()):
         return "judge"
-    _login_fails.append(now_s)
+    _login_fails.setdefault(address, []).append(now_s)
     return None
 
 
@@ -240,7 +242,7 @@ def ledger_state():
         for r in rows:
             r["when"] = nice(r["at"]) if r["at"] else ""
 
-        offers = q("SELECT decision, status, source FROM offers")
+        offers = q("SELECT decision, status, source FROM offers WHERE invoice_id>0")
         sent = q("SELECT * FROM invoices WHERE status='sent'")
         return {
             "business": get_setting("business"), "currency": get_setting("currency", "$"), "now": nice(now()),
@@ -375,9 +377,14 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def address(self):
+        # Behind Render's proxy, the last entry is the one the proxy itself added, so a client can't fake it.
+        forwarded = self.headers.get("X-Forwarded-For", "")
+        return forwarded.rsplit(",", 1)[-1].strip() or self.client_address[0]
+
     def login(self):
         try:
-            role = check_login(self.body().get("password"))
+            role = check_login(self.body().get("password"), self.address())
             if not role:
                 return self.send_json({"error": "That password isn't right."}, 401)
         except ValueError as e:
@@ -406,11 +413,6 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/logout":
             return self.send_cookie("", 0)
         judge = role == "judge"
-        if judge and path.startswith("/api/refunds/"):
-            return self.send_json({"error": "Only the owner can give money back. The demo login and the assistant "
-                                            "can't."}, 403)
-        if judge and path in JUDGE_BLOCKED:
-            return self.send_json({"error": "The demo login can't change this."}, 403)
         try:
             body = self.body()
             if path == "/api/chat":

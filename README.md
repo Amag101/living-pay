@@ -4,13 +4,13 @@
 
 **Live app:** https://living-pay.onrender.com (PayPal sandbox, no real money)
 
-Freelancers and small businesses lose hours chasing invoices, and a client who can't pay all at once usually just pays late. Living Pay sends a real PayPal invoice with an AI assistant attached. The client can ask it questions and arrange a payment plan, more time or a discount, and then pay. The assistant agrees to what the owner's rules allow, asks the owner about anything else, and declines the rest.
+When a client can't pay a freelancer's invoice all at once, the invoice just sits there, and the freelancer has to chase it. Living Pay sends a real PayPal invoice with an AI assistant attached. The client can ask it questions and arrange a payment plan, more time or a discount, and then pay. The assistant agrees to what the owner's rules allow, asks the owner about anything else, and declines the rest.
 
 Built for the [PayPal AI Hackathon](https://paypalaihackathon.devpost.com/).
 
 ## Try it
 
-Open the [live app](https://living-pay.onrender.com) and sign in with the judge password from our Devpost entry. A guided tour on the first page takes about 3 minutes and needs no setup.
+Open the [live app](https://living-pay.onrender.com) and sign in with the judge password from our Devpost entry. A guided tour on the first page needs no setup: its first 5 steps take about 3 minutes, and all 10 about 10. The judge login has full access to its own fresh copy of the app, and "Start again" makes a new one.
 
 ## How it works
 
@@ -26,7 +26,7 @@ Open the [live app](https://living-pay.onrender.com) and sign in with the judge 
 - **The rules are code, not a prompt.** Claude can only propose an offer. `policy.py` then allows it, sends it to the owner, or declines it, so nothing a client types can talk it past the rules.
 - **Autonomy is earned.** After the owner approves the same kind of request three times, the assistant asks to handle those itself. An undo narrows the rule back.
 - **Changes to an invoice can be undone,** from the assistant or the ledger, and every action is logged with the reason. A payment that has gone through can't be undone here, and a subcontractor payout can only be stopped while PayPal is still holding it.
-- **Only the owner can give money back.** A client can ask, and the assistant can pass that on, but it has no way to refund. Neither does the judge's login.
+- **Only the owner can give money back.** A client can ask, and the assistant can pass that on, but it has no way to refund.
 - **The owner's assistant can only read PayPal.** Ask "who hasn't paid yet?" and Claude looks it up through PayPal's MCP server, limited in code to five read-only tools. It has no way to refund, cancel or send.
 
 ## What it uses
