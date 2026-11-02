@@ -275,15 +275,16 @@ function renderStats() {
   const open = S.invoices.filter((i) => i.status === "sent");
   const tiles = [
     ["Waiting to be paid", money(open.reduce((a, i) => a + i.balance, 0))],
-    ["Collected", money(S.invoices.filter((i) => i.status !== "void").reduce((a, i) => a + (i.amount_paid || 0), 0))],
+    ["Collected", money(S.invoices.filter((i) => i.status !== "void").reduce((a, i) => a + (i.amount_paid || 0) - (i.refunded || 0), 0))],
     ["Needs your OK", S.pending],
   ];
   $("#stats").innerHTML = tiles.map(([l, v]) => `<div class="card stat"><div class="l">${l}</div><div class="v">${esc(v)}</div></div>`).join("");
 }
 
 function statusOf(i) {
-  if (i.status === "paid") return `<span class="pill good">Paid</span>`;
+  if (i.status === "paid") return i.refunded > 0 ? `<span class="pill good">Paid, ${money(i.refunded)} refunded</span>` : `<span class="pill good">Paid</span>`;
   if (i.status === "void") return `<span class="pill">Cancelled</span>`;
+  if (i.status === "refunded") return `<span class="pill">Refunded</span>`;
   if (i.late_amount > 0) return `<span class="pill bad">${money(i.late_amount)} missed, ${i.days_overdue} ${i.days_overdue === 1 ? "day" : "days"} late</span>`;
   if (i.days_overdue > 0) return `<span class="pill warn">${i.days_overdue} ${i.days_overdue === 1 ? "day" : "days"} overdue</span>`;
   if (i.amount_paid > 0) return `<span class="pill">${money(i.balance)} left</span>`;

@@ -117,6 +117,15 @@ class Payouts(unittest.TestCase):
         self.assertEqual(s.q1("SELECT status FROM payouts")["status"], "succeeded")
         self.assertEqual(event["event_type"], "PAYMENT.PAYOUTS-ITEM.SUCCEEDED")
 
+    def test_refund_warns_about_a_share_already_paid_out(self):
+        self.pay_in_full()
+        s.owner_message("approve")
+        cap = list(FAKE.captures.values())[-1]
+        s.paypal_client().call("POST", "/v2/payments/captures/%s/refund" % cap["id"], {})
+        hook = next(h for h in reversed(FAKE.webhooks) if h["event"]["event_type"] == "PAYMENT.CAPTURE.REFUNDED")
+        s.paypal_webhook(hook["headers"], hook["body"])
+        self.assertIn("You already paid Ada Nwosu $300", bot())
+
     def test_second_payout_to_a_known_payee_can_be_automatic(self):
         self.pay_in_full()
         s.owner_message("approve")

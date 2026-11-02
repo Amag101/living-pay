@@ -65,7 +65,7 @@ Without a Claude key, simple keyword rules stand in for the assistant.
 
 ## What it doesn't do yet
 
-- Refunds and disputes are handled in PayPal, not here.
+- Refunds and disputes are handled in PayPal, not here. When a refund or reversal happens, Living Pay corrects its numbers and tells the owner, but PayPal's own invoice page keeps showing the original payment.
 - A payment plan is an agreement, not an automatic charge: the client comes back to pay each instalment. Living Pay reminds them when one is missed, and asks the owner whether to end the plan at 14 days late.
 - PayPal lists payments taken on the invoice page as recorded by the seller, because they arrive through Orders and are then recorded on the invoice.
 - Sandbox only. It hasn't handled real money.

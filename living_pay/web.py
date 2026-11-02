@@ -152,7 +152,8 @@ def invoice_rows():
         balance = invoice_balance(i) if i["status"] == "sent" else 0
         due = (left[0]["due"] if left else i["due_at"][:10]) if balance else None
         rows.append({"id": "row-%d" % i["id"], "invoice": i["number"], "client": i["company"] or i["name"],
-                     "what": i["title"] or "Services", "total": invoice_total(i), "paid": i["amount_paid"] or 0,
+                     "what": i["title"] or "Services", "total": invoice_total(i),
+                     "paid": round((i["amount_paid"] or 0) - (i["refunded"] or 0), 2),
                      "balance": balance, "next_due": nice_date(due + "T12:00") if due else "", "due_sort": due or "",
                      "overdue": bool(due and due < today),
                      "plan": "%d of %d paid" % (len(plan) - len(left), len(plan)) if plan else "",
@@ -225,6 +226,13 @@ def ledger_state():
                          "client": po["name"], "what": "Share paid to %s" % po["name"], "amount": -po["amount"],
                          "status": po["status"], "verdict": None, "by": "automation", "why": "",
                          "paypal": po["item_id"], "undo": undoable(by_id.get(po["proposal_id"]))})
+        for r in q("SELECT r.*, i.number, c.name, c.company FROM refunds r JOIN invoices i ON i.id=r.invoice_id "
+                   "JOIN contacts c ON c.id=i.contact_id"):
+            rows.append({"id": "refund-%d" % r["id"], "at": r["at"], "kind": "Refund", "invoice": r["number"],
+                         "client": r["company"] or r["name"],
+                         "what": "Refunded through PayPal" if r["kind"] == "refund" else "Reversed by PayPal",
+                         "amount": -r["amount"], "status": r["kind"] == "refund" and "refunded" or "reversed",
+                         "verdict": None, "by": "PayPal", "why": "", "paypal": r["reference"], "undo": None})
         rows.sort(key=lambda r: (r["at"] or "", r["id"]), reverse=True)
         for r in rows:
             r["when"] = nice(r["at"]) if r["at"] else ""
@@ -235,7 +243,8 @@ def ledger_state():
             "business": get_setting("business"), "currency": get_setting("currency", "$"), "now": nice(now()),
             "kpis": {
                 "outstanding": round(sum(invoice_balance(i) for i in sent), 2),
-                "collected": round(q1("SELECT COALESCE(SUM(amount_paid),0) n FROM invoices WHERE status!='void'")["n"], 2),
+                "collected": round(q1("SELECT COALESCE(SUM(amount_paid-COALESCE(refunded,0)),0) n FROM invoices "
+                                      "WHERE status!='void'")["n"], 2),
                 "paid_out": round(q1("SELECT COALESCE(SUM(amount),0) n FROM payouts "
                                      "WHERE status NOT IN ('cancelled','failed')")["n"], 2),
                 "agent_agreed": sum(1 for o in offers if o["decision"] == "ALLOW" and o["status"] == "applied"

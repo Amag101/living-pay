@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS proposals (
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY, at TEXT, proposal_id INTEGER, automation_id INTEGER,
   event TEXT, actor TEXT, detail TEXT, data TEXT);
+CREATE TABLE IF NOT EXISTS refunds (
+  id INTEGER PRIMARY KEY, invoice_id INTEGER, amount REAL, kind TEXT, reference TEXT UNIQUE, at TEXT);
 CREATE TABLE IF NOT EXISTS payments (
   id INTEGER PRIMARY KEY, invoice_id INTEGER, amount REAL, method TEXT,
   reference TEXT UNIQUE, external_id TEXT, at TEXT);
@@ -141,7 +143,7 @@ MIGRATIONS = {
                  ("min_due", "REAL DEFAULT 0"), ("amount_paid", "REAL DEFAULT 0"),
                  ("paypal_id", "TEXT"), ("paypal_status", "TEXT"), ("payer_url", "TEXT"),
                  ("snapshot", "TEXT"), ("plan", "TEXT"), ("sub_id", "INTEGER"), ("sub_share", "REAL DEFAULT 0"),
-                 ("remind_email", "INTEGER DEFAULT 0"), ("tour", "INTEGER DEFAULT 0")],
+                 ("remind_email", "INTEGER DEFAULT 0"), ("tour", "INTEGER DEFAULT 0"), ("refunded", "REAL DEFAULT 0")],
 }
 
 

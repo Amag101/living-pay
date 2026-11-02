@@ -60,6 +60,8 @@ class Fake:
         self.invoices, self.orders, self.batches, self.items = {}, {}, {}, {}
         self.idempotent = {}
         self.reminders, self.cancelled = [], []
+        self.captures = {}
+        self.base = "https://fake.paypal"
         self.webhooks = []          # every event sent, newest last
         self.webhook_url = None
         self.webhook_id = "WH-FAKE-1"
@@ -107,6 +109,13 @@ class Fake:
             item["transaction_status"] = item.pop("_settles_to")
             self.emit("PAYMENT.PAYOUTS-ITEM." + ("SUCCEEDED" if item["transaction_status"] == "SUCCESS"
                                                   else "UNCLAIMED"), item)
+
+    def refund_of(self, cap, amount):
+        """The shape real PayPal returns: the id we put on the order, and a link up to the capture."""
+        cap["status"] = "PARTIALLY_REFUNDED" if amount != cap["amount"] else "REFUNDED"
+        return {"id": _id("", 17), "status": "COMPLETED", "amount": amount, "custom_id": cap.get("custom_id"),
+                "create_time": _now(),
+                "links": [{"rel": "up", "method": "GET", "href": "%s/v2/payments/captures/%s" % (self.base, cap["id"])}]}
 
     # ---- webhooks --------------------------------------------------------
 
@@ -340,10 +349,21 @@ class Handler(BaseHTTPRequestHandler):
                        "invoice_id": unit.get("invoice_id"), "custom_id": unit.get("custom_id"),
                        "final_capture": True, "create_time": _now()}
                 unit["payments"] = {"captures": [cap]}
+                FAKE.captures[cap["id"]] = cap
                 order["status"] = "COMPLETED"
                 order["payer"] = {"email_address": "client@personal.example", "payer_id": _id("", 13)}
                 FAKE.emit("PAYMENT.CAPTURE.COMPLETED", cap)
                 return 201, order
+
+        # ---- Refunds ----
+        parts = path.strip("/").split("/")
+        if len(parts) == 5 and parts[:3] == ["v2", "payments", "captures"] and parts[4] == "refund" and method == "POST":
+            cap = FAKE.captures.get(parts[3])
+            if not cap:
+                raise ApiError(404, "RESOURCE_NOT_FOUND", "The specified resource does not exist.", "INVALID_RESOURCE_ID")
+            refund = FAKE.refund_of(cap, body.get("amount") or cap["amount"])
+            FAKE.emit("PAYMENT.CAPTURE.REFUNDED", refund)
+            return 201, refund
 
         # ---- Payouts ----
         if path == "/v1/payments/payouts" and method == "POST":

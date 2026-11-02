@@ -151,6 +151,7 @@ function render() {
     <div class="row"><span class="k">Price</span><span class="num">${cash(S.amount)}</span></div>
     ${disc ? `<div class="row"><span class="k">Discount (${+S.discount_pct.toFixed(1)}%)</span><span class="num">−${cash(disc)}</span></div>` : ""}
     <div class="row"><span class="k">Total</span><span class="num">${cash(S.total)}</span></div>
+    ${S.refunded ? `<div class="row"><span class="k">Refunded to you</span><span class="num">${cash(S.refunded)}</span></div>` : ""}
     ${S.paid ? `<div class="row"><span class="k">Paid so far</span><span class="num">${cash(S.paid)}</span></div>` : ""}
     <div class="row big"><span>Balance</span><span class="num">${cash(S.balance)}</span></div>
     <div class="row"><span class="k">Due date</span><span>${esc(S.due_date)}</span></div>`;
@@ -192,7 +193,7 @@ function planView() {
 function renderPay() {
   const box = $("#paybox");
   if (S.status !== "sent") {
-    box.innerHTML = `<div class="due"><span>${S.status === "paid" ? "Paid in full. Thank you!" : "This invoice was cancelled."}</span></div>`;
+    box.innerHTML = `<div class="due"><span>${S.status === "refunded" ? "Refunded in full." : S.status === "paid" ? "Paid in full. Thank you!" : "This invoice was cancelled."}</span></div>`;
     return;
   }
   const hasChoice = S.due_now < S.balance - 0.005;

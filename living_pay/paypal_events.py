@@ -11,7 +11,7 @@ from living_pay.store import ex, get_setting, iso, log, money, now, q, q1, set_s
 from living_pay.invoices import invoice_balance
 from living_pay.connectors import PAYPAL_ACCOUNTING, paypal_client
 from living_pay.automations import enqueue, payment_received, process_queue
-from living_pay.checkout import advance_plan, settle_payment, thank_client
+from living_pay.checkout import advance_plan, record_refund, settle_payment, thank_client
 
 
 def tick_real():
@@ -43,6 +43,18 @@ def scheduler():
             print("paypal poll:", repr(e))
 
 
+def refunded_invoice(resource):
+    """Which invoice a refund belongs to: through its capture, or the id we put on the order."""
+    for link in resource.get("links", []):
+        if link.get("rel") == "up" and "/captures/" in link.get("href", ""):
+            pay = q1("SELECT invoice_id FROM payments WHERE reference=?",
+                     ("capture:%s" % link["href"].rstrip("/").rsplit("/", 1)[1],))
+            if pay:
+                return q1("SELECT * FROM invoices WHERE id=?", (pay["invoice_id"],))
+    m = re.match(r"^l[ip]:(\d+)$", resource.get("custom_id") or "")
+    return q1("SELECT * FROM invoices WHERE id=?", (int(m.group(1)),)) if m else None
+
+
 def reconcile_invoice(pp):
     """Bring one PayPal invoice's payments and status into the local mirror."""
     inv = q1("SELECT * FROM invoices WHERE paypal_id=?", (pp.get("id"),))
@@ -64,6 +76,10 @@ def reconcile_invoice(pp):
         inv = q1("SELECT * FROM invoices WHERE id=?", (inv["id"],))
         advance_plan(inv)
         thank_client(inv, amount)
+    # Refunds of payments made on PayPal's own invoice page.
+    for t in pp.get("refunds", {}).get("transactions", []):
+        inv = q1("SELECT * FROM invoices WHERE id=?", (inv["id"],))
+        record_refund(inv, t["amount"]["value"], "refund:%s" % t["refund_id"], "refund")
     inv = q1("SELECT * FROM invoices WHERE id=?", (inv["id"],))
     if pp.get("status") == "CANCELLED" and inv["status"] == "sent":
         ex("UPDATE invoices SET status='void' WHERE id=?", (inv["id"],))
@@ -108,6 +124,14 @@ def paypal_webhook(headers, raw):
                 if inv and inv["status"] == "sent" and not q1("SELECT id FROM payments WHERE reference=?",
                                                                ("capture:%s" % cap["id"],)):
                     settle_payment(inv, float(cap["amount"]["value"]), "capture:%s" % cap["id"], "PAYPAL", "paypal")
+                    process_queue()
+        if etype in ("PAYMENT.CAPTURE.REFUNDED", "PAYMENT.CAPTURE.REVERSED"):
+            res = event.get("resource", {})
+            kind = "refund" if etype.endswith("REFUNDED") else "reversal"
+            with LOCK:
+                inv = refunded_invoice(res)
+                if inv:
+                    record_refund(inv, res["amount"]["value"], "%s:%s" % (kind, res["id"]), kind)
                     process_queue()
         if etype.startswith("PAYMENT.PAYOUTS-ITEM."):
             item = event.get("resource", {})

@@ -73,7 +73,7 @@
     </div>
     <div class="seg" id="kinds" role="group" aria-label="Show">
       <button aria-pressed="true" data-k="">All</button><button aria-pressed="false" data-k="Request">Requests</button>
-      <button aria-pressed="false" data-k="Payment">Payments</button><button aria-pressed="false" data-k="Payout">Payouts</button>
+      <button aria-pressed="false" data-k="Payment">Payments</button><button aria-pressed="false" data-k="Payout">Payouts</button><button aria-pressed="false" data-k="Refund">Refunds</button>
     </div>
     <input id="q" type="search" placeholder="Search…" aria-label="Search the ledger">
     <span class="chip" id="focus" hidden><span id="focustext"></span><button id="clearfocus" aria-label="Clear">✕</button></span>
@@ -96,7 +96,7 @@ function cash(x) {
 
 const STATUS = {applied: "good", approved: "good", paid: "good", received: "good", success: "good", succeeded: "good",
   pending_owner: "warn", sent: "", unclaimed: "warn", pending: "warn", countered: "warn",
-  denied: "bad", declined: "bad", void: "muted", cancelled: "muted", returned: "muted", reverted: "muted", failed: "bad"};
+  denied: "bad", declined: "bad", refunded: "muted", reversed: "bad", void: "muted", cancelled: "muted", returned: "muted", reverted: "muted", failed: "bad"};
 const LABEL = {pending_owner: "waiting for you", applied: "applied", denied: "refused", sent: "open", void: "cancelled"};
 const VERDICT = {ALLOW: ["good", "Allowed"], ESCALATE: ["warn", "Asked you"], DENY: ["bad", "Refused"], OWNER: ["", "Your counter"]};
 
@@ -129,7 +129,7 @@ const VIEWS = {
        cellRenderer: (p) => p.value ? `<button class="undo" data-undo="${Number(p.value)}">Undo</button>` : ""},
     ],
     // Only real money moving counts towards the total: requests and invoices are promises.
-    total: (rows) => ({when: "Money moved", amount: rows.filter((r) => r.kind === "Payment" || r.kind === "Payout").reduce((n, r) => n + r.amount, 0)}),
+    total: (rows) => ({when: "Money moved", amount: rows.filter((r) => r.kind === "Payment" || r.kind === "Payout" || r.kind === "Refund").reduce((n, r) => n + r.amount, 0)}),
   },
   invoices: {
     rows: () => L.invoices, id: (d) => d.id, file: "invoices", drill: (d) => show("activity", d.invoice),
@@ -210,7 +210,7 @@ function renderKpis() {
   const k = L.kpis;
   const tiles = [
     ["Outstanding", cash(k.outstanding), "still owed by clients"],
-    ["Collected", cash(k.collected), "payments received"],
+    ["Collected", cash(k.collected), "payments, less refunds"],
     ["Paid out", cash(k.paid_out), "to subcontractors"],
     ["Rules allowed", k.agent_agreed, "requests within your rules"],
     ["Rules asked you", k.owner_decided, "requests outside them"],

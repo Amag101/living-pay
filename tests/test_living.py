@@ -224,6 +224,104 @@ class Living(unittest.TestCase):
         s.advance_clock(24 * 31)
         self.assertEqual(self.missed_reminders(), [])
 
+    # ---- refunds and reversals ----
+
+    def refund(self, amount=None, cap=None):
+        cap = cap or list(FAKE.captures.values())[-1]
+        s.paypal_client().call("POST", "/v2/payments/captures/%s/refund" % cap["id"],
+                               {"amount": {"value": "%.2f" % amount, "currency_code": "USD"}} if amount else {})
+        hook = next(h for h in reversed(FAKE.webhooks) if h["event"]["event_type"] == "PAYMENT.CAPTURE.REFUNDED")
+        return hook
+
+    def owner_messages(self):
+        return "\n".join(m["body"] for m in s.q("SELECT body FROM chat WHERE sender='bot'"))
+
+    def collected(self):
+        return s.ledger_state()["kpis"]["collected"]
+
+    def reversal(self, cap, amount):
+        FAKE.emit("PAYMENT.CAPTURE.REVERSED", dict(FAKE.refund_of(cap, {"value": "%.2f" % amount, "currency_code": "USD"})))
+        return next(h for h in reversed(FAKE.webhooks) if h["event"]["event_type"] == "PAYMENT.CAPTURE.REVERSED")
+
+    def test_full_refund_corrects_the_numbers_and_tells_everyone(self):
+        before = self.collected()
+        self.pay()  # the whole $1,200
+        hook = self.refund()
+        self.assertEqual(s.paypal_webhook(hook["headers"], hook["body"]), 200)
+        inv = self.local()
+        self.assertEqual((inv["status"], inv["refunded"]), ("refunded", 1200))
+        self.assertEqual(self.collected(), before)
+        self.assertIn("**Refund:** $1,200", self.owner_messages())
+        self.assertIn("withdrawn", owner_last())  # Ada's unpaid share is no longer due
+        self.assertIn("refunded $1,200", s.living_state(self.token)["chat"][-1]["body"])
+        row = [r for r in s.ledger_state()["rows"] if r["kind"] == "Refund"][0]
+        self.assertEqual(row["amount"], -1200)
+
+    def test_refund_is_counted_once(self):
+        self.pay()
+        hook = self.refund(100)
+        s.paypal_webhook(hook["headers"], hook["body"])
+        s.ex("DELETE FROM webhook_events")  # PayPal redelivers
+        s.paypal_webhook(hook["headers"], hook["body"])
+        self.assertEqual(self.local()["refunded"], 100)
+        self.assertEqual(s.q1("SELECT COUNT(*) n FROM refunds")["n"], 1)
+
+    def test_partial_refund_keeps_a_paid_invoice_paid(self):
+        self.pay()
+        hook = self.refund(100)
+        s.paypal_webhook(hook["headers"], hook["body"])
+        self.assertEqual((self.local()["status"], s.invoice_balance(self.local())), ("paid", 0))
+
+    def test_refund_on_a_plan_keeps_the_rest_open_and_says_so(self):
+        self.say("Can I split this into 3 payments?")
+        self.pay()
+        hook = self.refund(400)
+        s.paypal_webhook(hook["headers"], hook["body"])
+        inv = self.local()
+        self.assertEqual((inv["status"], s.invoice_balance(inv)), ("sent", 800))
+        self.assertIn("stays open", owner_last())
+
+    def test_refund_cannot_be_more_than_was_paid(self):
+        self.say("Can I split this into 3 payments?")
+        self.pay()
+        s.record_refund(self.local(), 5000, "refund:x", "refund")
+        self.assertEqual(self.local()["refunded"], 400)
+
+    def test_old_orders_with_the_earlier_id_still_match(self):
+        self.pay()
+        res = {"custom_id": "li:%d" % self.inv["id"], "links": []}
+        self.assertEqual(s.refunded_invoice(res)["id"], self.inv["id"])
+        self.assertIsNone(s.refunded_invoice({"custom_id": "li:check", "links": []}))
+
+    def test_a_refund_of_something_else_is_ignored(self):
+        self.pay()
+        hook_body = {"id": "R1", "amount": {"value": "5.00"}, "links": []}
+        FAKE.emit("PAYMENT.CAPTURE.REFUNDED", hook_body)
+        hook = FAKE.webhooks[-1]
+        self.assertEqual(s.paypal_webhook(hook["headers"], hook["body"]), 200)
+        self.assertEqual(self.local()["refunded"] or 0, 0)
+
+    def test_reversal_reopens_what_was_taken_back(self):
+        self.pay()
+        hook = self.reversal(list(FAKE.captures.values())[-1], 1200)
+        self.assertEqual(s.paypal_webhook(hook["headers"], hook["body"]), 200)
+        inv = self.local()
+        self.assertEqual((inv["status"], inv["amount_paid"], s.invoice_balance(inv)), ("sent", 0, 1200))
+        self.assertIn("**Payment reversed:**", self.owner_messages())
+
+    def test_reversal_on_a_plan_makes_that_payment_owed_again(self):
+        self.say("Can I split this into 3 payments?")
+        self.pay()
+        hook = self.reversal(list(FAKE.captures.values())[-1], 400)
+        s.paypal_webhook(hook["headers"], hook["body"])
+        self.assertEqual(s.living_state(self.token)["plan"][0]["owed"], 400)
+
+    def test_summary_shows_refunds(self):
+        self.pay()
+        hook = self.refund(100)
+        s.paypal_webhook(hook["headers"], hook["body"])
+        self.assertIn("less $100 refunded", s.summary_text())
+
     # ---- the page ----
 
     def test_state_for_a_valid_link_only(self):

@@ -388,6 +388,7 @@ def summary_text():
                   "WHERE issued_at>=? AND status!='void'", (week,))
     collected = q1("SELECT COALESCE(SUM(amount),0) s, COUNT(*) n FROM invoices "
                    "WHERE paid_at>=? AND status='paid'", (week,))
+    refunded = q1("SELECT COALESCE(SUM(amount),0) s FROM refunds WHERE at>=?", (week,))["s"]
     open_inv = q("SELECT * FROM invoices WHERE status='sent'")
     overdue = [i for i in open_inv if days_late(i) > 0]
     done = q("SELECT p.*, a.template FROM proposals p LEFT JOIN automations a ON a.id=p.automation_id "
@@ -395,7 +396,7 @@ def summary_text():
     minutes = sum(TEMPLATES[d["template"]].minutes_saved for d in done if d["template"] in TEMPLATES)
     lines = ["**Your week at %s**" % biz,
              "Invoiced: %s across %d invoice%s" % (money(invoiced["s"]), invoiced["n"], "" if invoiced["n"] == 1 else "s"),
-             "Collected: %s" % money(collected["s"]),
+             "Collected: %s%s" % (money(collected["s"]), ", less %s refunded" % money(refunded) if refunded else ""),
              "Outstanding: %s across %d invoice%s, %d overdue (%s)" % (
                  money(sum(invoice_balance(i) for i in open_inv)), len(open_inv), "" if len(open_inv) == 1 else "s",
                  len(overdue), money(sum(invoice_balance(i) for i in overdue)))]

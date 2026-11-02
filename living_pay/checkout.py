@@ -6,7 +6,7 @@ import urllib.request
 
 from living_pay import paypal_api as paypal
 from living_pay.config import CURRENCY_CODE, LOCK
-from living_pay.store import ex, get_setting, iso, log, now, q1
+from living_pay.store import ex, get_setting, iso, log, money, now, post, q, q1, who
 from living_pay.invoices import cash, due_now, invoice_balance, invoice_link, plan_of, plan_rows
 from living_pay.connectors import connector, paypal_client, paypal_mode
 from living_pay.automations import enqueue, payment_received, process_queue
@@ -43,6 +43,46 @@ def thank_client(inv, amount):
     chat_add(inv["id"], "agent", "Thank you! %s received. %s" % (cash(amount), (
         "This invoice is now fully paid." if inv["status"] == "paid"
         else "%s is left, and %s is due next." % (cash(invoice_balance(inv)), cash(due_now(inv))))))
+
+
+def record_refund(inv, amount, reference, kind):
+    """Money going back to the client, as PayPal reports it. A refund is the owner's choice, so what's
+    still owed stays as it was. A reversal is taken back against the owner's will, so that money is owed again."""
+    if q1("SELECT id FROM refunds WHERE reference=?", (reference,)):
+        return False
+    net = round((inv["amount_paid"] or 0) - (inv["refunded"] or 0), 2)
+    amount = round(min(float(amount), net), 2)
+    if amount <= 0:
+        return False
+    ex("INSERT INTO refunds(invoice_id,amount,kind,reference,at) VALUES(?,?,?,?,?)",
+       (inv["id"], amount, kind, reference, iso(now())))
+    c = q1("SELECT * FROM contacts WHERE id=?", (inv["contact_id"],))
+    if kind == "reversal":
+        ex("UPDATE invoices SET amount_paid=?, status='sent', paid_at=NULL WHERE id=?",
+           (round((inv["amount_paid"] or 0) - amount, 2), inv["id"]))
+        inv = q1("SELECT * FROM invoices WHERE id=?", (inv["id"],))
+        advance_plan(inv)
+        text = "**Payment reversed:** PayPal took %s back from you on %s, from %s. %s is now owed again." % (
+            money(amount), inv["number"], who(c), money(invoice_balance(inv)))
+    else:
+        refunded = round((inv["refunded"] or 0) + amount, 2)
+        whole = refunded >= (inv["amount_paid"] or 0) - 0.005 and inv["status"] == "paid"
+        ex("UPDATE invoices SET refunded=?, status=? WHERE id=?",
+           (refunded, "refunded" if whole else inv["status"], inv["id"]))
+        chat_add(inv["id"], "agent", "%s has refunded %s to you. It should reach you through PayPal." % (
+            get_setting("business"), cash(amount)))
+        text = "**Refund:** %s went back to %s on %s." % (money(amount), who(c), inv["number"])
+        if inv["status"] == "sent":
+            text += " The %s still unpaid stays open, so reminders continue unless you cancel it in PayPal." % (
+                money(invoice_balance(inv)))
+    paid_out = q("SELECT p.amount, s.name FROM payouts p JOIN subcontractors s ON s.id=p.sub_id "
+                 "WHERE p.invoice_id=? AND p.status NOT IN ('cancelled','failed')", (inv["id"],))
+    for p in paid_out:
+        text += " You already paid %s %s for this job, and this doesn't change that." % (p["name"], money(p["amount"]))
+    log("refund_" + kind, "%s of %s on %s went back to %s" % (kind.capitalize(), money(amount), inv["number"], who(c)),
+        actor="paypal", data={"invoice_id": inv["id"], "amount": amount, "reference": reference})
+    post("bot", text)
+    return True
 
 
 def advance_plan(inv):
