@@ -185,6 +185,39 @@ class Living(unittest.TestCase):
         s.owner_message("undo")
         self.assertEqual(s.living_state(self.token)["plan"][1]["due"], "Mon 23 Nov")
 
+    def end_plan(self):
+        self.plan_and_first_payment()
+        s.advance_clock(24 * 31)
+        s.advance_clock(24 * 13)
+        p = s.q1("SELECT * FROM proposals WHERE dedupe LIKE 'endplan:%' AND status='pending'")
+        s.owner_message("approve #%d" % p["id"])
+        return p
+
+    def test_after_a_plan_ends_a_new_plan_or_more_time_goes_to_the_owner(self):
+        self.end_plan()
+        self.assertTrue(s.living_state(self.token)["plan_ended"])
+        out = s.run_tool(self.local(), "propose_payment_plan",
+                         {"installments": 2, "first_amount": None, "next_payment_date": None, "gap_days": 30})
+        self.assertEqual(out["result"], "sent_to_owner")
+        s.owner_message("skip")
+        out = s.run_tool(self.local(), "propose_extension", {"days": 3})
+        self.assertEqual(out["result"], "sent_to_owner")
+
+    def test_undoing_the_end_lets_the_rules_apply_again(self):
+        p = self.end_plan()
+        s.owner_message("undo #%d" % p["id"])
+        self.assertFalse(s.living_state(self.token)["plan_ended"])
+
+    def test_a_named_date_sets_the_schedule_in_code(self):
+        out = s.run_tool(self.local(), "propose_payment_plan",
+                         {"installments": 2, "first_amount": 400, "next_payment_date": "2026-11-15", "gap_days": None})
+        self.assertEqual(out["result"], "applied")
+        self.assertEqual(s.living_state(self.token)["plan"][1]["due"], "Sun 15 Nov")
+
+    def test_a_bad_date_changes_nothing(self):
+        with self.assertRaises(ValueError):
+            s.plan_gap({"next_payment_date": "the fifteenth"})
+
     def test_paused_automation_stops_chasing(self):
         self.plan_and_first_payment()
         s.owner_message("pause missed plan payments")

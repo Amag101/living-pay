@@ -266,7 +266,7 @@ function renderChat() {
   $("#text").disabled = !open || busy; $("#sendbtn").disabled = !open || busy;
   // The suggestions stay available, minus any that no longer make sense for this invoice.
   const suggestions = [
-    !S.plan.length && "Can I split this into 3 payments?",
+    !S.plan.length && !S.plan_ended && "Can I split this into 3 payments?",
     S.discount_chip && !S.discount_pct && !S.paid && "Any discount if I pay today?",
     "Could I have two more weeks?",
     "What is this invoice for?",

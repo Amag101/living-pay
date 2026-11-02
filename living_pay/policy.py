@@ -165,6 +165,9 @@ def _plan(offer, inv, m, history):
     if gap > m["max_installment_gap_days"]:
         decision = ESCALATE
         reasons.append("payments %d days apart is longer than %d" % (gap, m["max_installment_gap_days"]))
+    if history.get("plan_ended"):
+        decision = ESCALATE
+        reasons.append("the owner already ended a plan on this invoice for missed payments")
     if m["installments_for"] == "repeat_clients" and not history.get("paid_invoices"):
         decision = ESCALATE
         reasons.append("plans are only automatic for repeat clients, and this is a new one")
@@ -187,6 +190,8 @@ def _extension(offer, inv, m, history):
         return Verdict(DENY, ["%d days is far beyond anything the owner allows" % days])
     due = date.fromisoformat(str(inv["due_at"])[:10])
     terms = {"due_at": (due + timedelta(days=days)).isoformat(), "days": days, "shifts_plan": bool(inv.get("plan"))}
+    if history.get("plan_ended"):
+        return Verdict(ESCALATE, ["the owner already ended a plan on this invoice for missed payments"], terms)
     if days > m["max_extension_days"]:
         return Verdict(ESCALATE, ["%d days is longer than the %d-day extension the agent may give"
                                   % (days, m["max_extension_days"])], terms)

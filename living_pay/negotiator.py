@@ -4,6 +4,7 @@ import json
 import os
 import re
 import time
+from datetime import date
 
 from living_pay import policy
 from living_pay.paypal_api import PayPalError
@@ -41,8 +42,13 @@ def living(token):
 def client_history(inv):
     n = q1("SELECT COUNT(*) n FROM invoices WHERE contact_id=? AND status='paid' AND id!=?",
            (inv["contact_id"], inv["id"]))["n"]
-    return {"paid_invoices": n, "today": now().date(),
+    return {"paid_invoices": n, "today": now().date(), "plan_ended": plan_ended(inv),
             "discount_needs_full_payment": discount_needs_full_payment(inv)}
+
+
+def plan_ended(inv):
+    """The owner ended a plan on this invoice for missed payments, and hasn't undone it."""
+    return bool(q1("SELECT id FROM proposals WHERE dedupe LIKE ? AND status='executed'", ("endplan:%d:%%" % inv["id"],)))
 
 
 def terms_params(inv, kind, terms):
@@ -194,7 +200,7 @@ def invoice_facts(inv):
         "next_payment_due": next_due(inv)[1],
         "missed_payments": cash(sum(r["owed"] for r in missed_rows(inv))) if missed_rows(inv) else None,
         "days_late": days_late(inv) if missed_rows(inv) else 0,
-        "today": nice_date(now()),
+        "today": nice_date(now()), "today_iso": now().date().isoformat(),
         "discount_for_paying_in_full_today_pct": mandate()["early_pay_discount_pct"],
         "payment_plan": [{"due": nice_date(r["due"] + "T12:00"), "amount": cash(r["amount"]),
                           "still_owed": cash(r["owed"])} for r in plan_rows(inv)],
@@ -233,8 +239,8 @@ If a plan payment has been missed, say so kindly with the amount and date, and o
 propose_extension if they need it.
 
 When the client names their own amounts or dates, request exactly that with the tool straight away, without \
-asking them to confirm. Take a date like "the 15th" as the next one to come, and work out gap_days from today in \
-the facts.
+asking them to confirm. Take a date like "the 15th" as the next one to come and pass it as next_payment_date. \
+Only state dates that a tool result or the facts give you.
 
 If the client says they can't pay it all now but hasn't said how they'd like to pay, offer both ways: PayPal Pay Later, which PayPal may offer at \
 checkout and which pays {business} in full today, or a payment plan through you. PayPal decides who qualifies, \
@@ -256,10 +262,13 @@ NEGOTIATOR_TOOLS = [
     {"name": "propose_payment_plan", "strict": True,
      "description": "Split the remaining balance into installments. The first is due today.",
      "input_schema": {"type": "object", "additionalProperties": False,
-                      "required": ["installments", "first_amount", "gap_days"],
+                      "required": ["installments", "first_amount", "next_payment_date", "gap_days"],
                       "properties": {"installments": {"type": "integer", "description": "Number of payments, 2 or more"},
                                      "first_amount": {"type": ["number", "null"],
                                                       "description": "First payment, or null to split evenly"},
+                                     "next_payment_date": {"type": ["string", "null"],
+                                                           "description": "The second payment's date as YYYY-MM-DD "
+                                                                          "if the client named one, otherwise null"},
                                      "gap_days": {"type": ["integer", "null"],
                                                   "description": "Days between payments, or null for 30"}}}},
     {"name": "propose_extension", "strict": True,
@@ -273,13 +282,21 @@ NEGOTIATOR_TOOLS = [
 ]
 
 
+def plan_gap(args):
+    """Days between payments. A date the client named is worked out here, not by the model."""
+    named = args.get("next_payment_date")
+    if not named:
+        return args.get("gap_days")
+    return (date.fromisoformat(named) - now().date()).days
+
+
 def run_tool(inv, name, args):
     with LOCK:
         if name == "propose_discount":
             return propose_offer(inv, {"kind": "discount", "pct": args["pct"], "condition": args["condition"]})
         if name == "propose_payment_plan":
             return propose_offer(inv, {"kind": "payment_plan", "installments": args["installments"],
-                                       "first_amount": args.get("first_amount"), "gap_days": args.get("gap_days")})
+                                       "first_amount": args.get("first_amount"), "gap_days": plan_gap(args)})
         if name == "propose_extension":
             return propose_offer(inv, {"kind": "extension", "days": args["days"]})
         if name == "ask_owner":
@@ -434,7 +451,7 @@ def living_state(token):
             "mode": paypal_mode(), "payer_url": inv["payer_url"],
             "paypal_client_id": os.environ.get("PAYPAL_CLIENT_ID") if paypal_mode() == "paypal" else None,
             "currency_code": CURRENCY_CODE, "paypal_env": os.environ.get("PAYPAL_ENV", "sandbox"),
-            "ai": LLM.on, "discount_chip": get_setting("discount_chip", "0") == "1",
+            "ai": LLM.on, "plan_ended": plan_ended(inv), "discount_chip": get_setting("discount_chip", "0") == "1",
         }
 
 

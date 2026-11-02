@@ -2,11 +2,11 @@
 import json
 import os
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from living_pay.config import LOCK
 from living_pay.store import ex, log, now, q, q1, set_setting
-from living_pay.invoices import plan_rows, shift_plan
+from living_pay.invoices import plan_of, plan_rows
 from living_pay.paypal_api import PayPalError
 from living_pay.connectors import connector
 from living_pay.automations import TEMPLATES, enqueue, process_queue, sweep_stale
@@ -78,6 +78,16 @@ def start_tour():
         log("tour_started", "A judge started the tour on %s" % inv["number"], actor="owner")
 
 
+def move_back(inv, days):
+    """Moves the whole sample invoice in time, so its dates still make sense together."""
+    plan = plan_of(inv)
+    plan["schedule"] = [dict(p, due=(date.fromisoformat(p["due"]) + timedelta(days=days)).isoformat())
+                        for p in plan["schedule"]]
+    shifted = lambda at: (datetime.fromisoformat(at) + timedelta(days=days)).isoformat(timespec="minutes")
+    ex("UPDATE invoices SET plan=?, issued_at=?, due_at=? WHERE id=?",
+       (json.dumps(plan), shifted(inv["issued_at"]), shifted(inv["due_at"]), inv["id"]))
+
+
 def miss_payment(days):
     """Real plans take weeks to slip, so this moves the sample invoice's unpaid dates back and lets the real
     chasing run. It only ever touches the tour's sample invoice."""
@@ -90,8 +100,7 @@ def miss_payment(days):
         if not left:
             raise ValueError("Agree a payment plan on the sample invoice first")
         target = now().date() - timedelta(days=days)
-        ex("UPDATE invoices SET plan=? WHERE id=?",
-           (shift_plan(inv, (target - date.fromisoformat(left[0]["due"])).days), inv["id"]))
+        move_back(inv, (target - date.fromisoformat(left[0]["due"])).days)
         log("tour_late", "The tour made %s's next payment %d day%s late" % (inv["number"], days, "" if days == 1 else "s"),
             actor="owner")
         enqueue("clock.tick", {"at": now().isoformat()})

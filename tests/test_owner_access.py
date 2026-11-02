@@ -213,6 +213,7 @@ class JudgeLogin(Login):
         self.assertEqual(self.hit("/api/tour/late", {"days": 1}, cookie)[0], 200)
         inv = s.q1("SELECT * FROM invoices WHERE id=?", (inv["id"],))
         self.assertEqual(s.days_late(inv), 1)
+        self.assertLessEqual(inv["issued_at"][:10], json.loads(inv["plan"])["schedule"][1]["due"])
         self.assertTrue(s.q("SELECT id FROM proposals WHERE dedupe LIKE 'missed:%'"))
         self.assertEqual(self.hit("/api/tour/late", {"days": 14}, cookie)[0], 200)
         self.assertTrue(s.q("SELECT id FROM proposals WHERE dedupe LIKE 'endplan:%' AND status='pending'"))
