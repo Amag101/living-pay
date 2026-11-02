@@ -117,6 +117,8 @@ class Login(unittest.TestCase):
         cookie = self.login()
         self.hit("/api/settings/business", {"name": "Ruth's Bakery"}, cookie)
         self.assertEqual(s.get_setting("business"), "Ruth's Bakery")
+        self.hit("/api/settings/business", {"name": "Ruth's Bakery"}, cookie)  # saving again changes nothing
+        self.assertEqual(len(s.q("SELECT id FROM audit WHERE event='setting_changed'")), 1)
         self.assertEqual(s.get_setting("discount_chip", "0"), "0")
         self.hit("/api/settings/discount_chip", {"on": True}, cookie)
         self.assertEqual(s.get_setting("discount_chip"), "1")

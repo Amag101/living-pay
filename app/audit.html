@@ -65,7 +65,7 @@
     <div class="card" style="padding:14px 18px;display:grid;gap:12px">
       <form id="bizform" class="row" style="gap:8px;align-items:center">
         <input id="bizname" aria-label="Business name" maxlength="127" required style="flex:1;min-width:180px">
-        <button>Save name</button>
+        <button id="bizsave">Save name</button>
       </form>
       <label class="switch"><input type="checkbox" id="chip">
         <span><strong>Suggest a discount on invoices</strong><br><span class="faint">Off: clients can still ask, but the invoice won't prompt them to.</span></span></label>
@@ -115,7 +115,7 @@ const EVENT = {
   proposed: ["Proposed", ""], approved: ["Approved", "good"], executed: ["Done", "good"], skipped: ["Skipped", ""],
   cancelled: ["Withdrawn", ""], undone: ["Undone", "warn"], failed: ["Failed", "bad"], observed: ["Watched", ""],
   trust_changed: ["Trust", "warn"], automation_saved: ["Rule saved", "good"], paused: ["Paused", "warn"], resumed: ["Resumed", "good"],
-  connected: ["Connected", "good"], disconnected: ["Disconnected", "warn"], connection_lost: ["Access lost", "bad"], setting_changed: ["Setting", "warn"], paypal_question: ["PayPal", ""],
+  connected: ["Connected", "good"], disconnected: ["Disconnected", "warn"], connection_lost: ["Access lost", "bad"], setting_changed: ["Setting", "warn"], paypal_question: ["PayPal", ""], offer_checked: ["Rules check", ""], payment_received: ["Payment", "good"], invoice_paid: ["Paid", "good"], reminders_changed: ["Reminders", ""],
 };
 let last = "";
 
@@ -160,6 +160,7 @@ async function load() {
 }
 
 function renderGoogle(g) {
+  $("#google").closest("section").hidden = !g.configured && !g.connected;
   let html;
   if (!g.crypto) {
     html = `<div>Encrypted token storage needs the <code>cryptography</code> package. Run <code>pip3 install cryptography</code> and restart the server.</div>`;
@@ -216,9 +217,13 @@ function showBanner(text, ok) {
   if (p.toString()) history.replaceState(null, "", "/audit");
 })();
 
-$("#bizform").addEventListener("submit", (e) => {
+$("#bizform").addEventListener("submit", async (e) => {
   e.preventDefault();
-  postJSON("/api/settings/business", { name: $("#bizname").value });
+  const b = $("#bizsave");
+  b.disabled = true; b.textContent = "Saving…";
+  const res = await postJSON("/api/settings/business", { name: $("#bizname").value });
+  b.textContent = res.error ? "Save name" : "Saved ✓";
+  setTimeout(() => { b.disabled = false; b.textContent = "Save name"; }, 2000);
 });
 $("#logout").addEventListener("click", async () => {
   await fetch("/logout", { method: "POST" });
