@@ -125,6 +125,100 @@ class Login(unittest.TestCase):
         self.assertEqual(self.hit("/api/settings/business", {"name": " "}, cookie)[0], 400)
 
 
+class JudgeLogin(Login):
+    """The judge password opens the app with a guided tour and limits."""
+
+    @classmethod
+    def setUpClass(cls):
+        os.environ["LIVING_JUDGE_PASSWORD"] = "test-judge-password"
+        super().setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        os.environ.pop("LIVING_JUDGE_PASSWORD")
+
+    def judge(self):
+        code, headers, _ = self.hit("/login", {"password": "test-judge-password"})
+        self.assertEqual(code, 200)
+        return headers["Set-Cookie"].split(";")[0]
+
+    def state(self, cookie):
+        return json.loads(self.hit("/api/state", cookie=cookie)[2])
+
+    def test_judge_gets_a_tour_and_the_owner_does_not(self):
+        self.assertIn("tour", self.state(self.judge()))
+        self.assertNotIn("tour", self.state(self.login()))
+
+    def test_judge_cannot_change_the_business_or_reset(self):
+        cookie = self.judge()
+        for path in ("/api/settings/business", "/api/settings/discount_chip", "/api/reset"):
+            self.assertEqual(self.hit(path, {"name": "Hacked", "on": True}, cookie)[0], 403, path)
+
+    def test_a_judge_cookie_cannot_be_turned_into_an_owner_cookie(self):
+        value = self.judge().split("=", 1)[1]
+        forged = "living_owner=" + value.replace("judge.", "owner.", 1)
+        self.assertEqual(self.hit("/api/state", cookie=forged)[0], 401)
+
+    def test_owner_cannot_use_tour_routes(self):
+        self.assertEqual(self.hit("/api/tour/start", {}, self.login())[0], 404)
+
+    def test_buyer_password_only_reaches_a_judge(self):
+        os.environ["LIVING_DEMO_BUYER_PASSWORD"] = "sandbox-only"
+        try:
+            self.assertEqual(self.state(self.judge())["tour"]["buyer_password"], "sandbox-only")
+            self.assertNotIn(b"sandbox-only", self.hit("/api/state", cookie=self.login())[2])
+            self.assertEqual(self.hit("/api/state")[0], 401)
+        finally:
+            os.environ.pop("LIVING_DEMO_BUYER_PASSWORD")
+
+    def test_tour_sends_a_sample_and_starting_again_replaces_it(self):
+        cookie = self.judge()
+        self.assertEqual(self.hit("/api/tour/start", {}, cookie)[0], 200)
+        first = self.state(cookie)["tour"]
+        self.assertTrue(first["token"])
+        self.hit("/api/tour/start", {}, cookie)
+        second = self.state(cookie)["tour"]
+        self.assertNotEqual(first["token"], second["token"])
+        self.assertEqual(s.q1("SELECT status FROM invoices WHERE token=?", (first["token"],))["status"], "void")
+
+    def test_starting_again_restores_the_rules(self):
+        cookie = self.judge()
+        s.set_setting("mandate", json.dumps({"max_installments": 9}))
+        s.ex("UPDATE automations SET enabled=0")
+        self.hit("/api/tour/start", {}, cookie)
+        self.assertEqual(s.mandate()["max_installments"], 3)
+        self.assertFalse(s.q("SELECT id FROM automations WHERE enabled=0"))
+
+    def test_invoice_limit_for_judges(self):
+        cookie = self.judge()
+        keep = s.JUDGE_INVOICES_PER_DAY
+        s.JUDGE_INVOICES_PER_DAY = 1
+        s._invoice_times.clear()
+        try:
+            self.assertEqual(self.hit("/api/tour/start", {}, cookie)[0], 200)
+            self.assertEqual(self.hit("/api/tour/start", {}, cookie)[0], 400)
+        finally:
+            s.JUDGE_INVOICES_PER_DAY = keep
+            s._invoice_times.clear()
+
+    def test_missing_a_payment_needs_a_plan_and_only_moves_the_sample(self):
+        cookie = self.judge()
+        self.assertEqual(self.hit("/api/tour/late", {"days": 1}, cookie)[0], 400)
+        self.hit("/api/tour/start", {}, cookie)
+        inv = s.q1("SELECT * FROM invoices WHERE tour=1 ORDER BY id DESC")
+        self.assertEqual(self.hit("/api/tour/late", {"days": 1}, cookie)[0], 400)  # no plan yet
+        s.client_message(inv["token"], "Can I split this into 3 payments?")
+        self.assertEqual(self.hit("/api/tour/late", {"days": 5}, cookie)[0], 400)
+        self.assertEqual(self.hit("/api/tour/late", {"days": 1}, cookie)[0], 200)
+        inv = s.q1("SELECT * FROM invoices WHERE id=?", (inv["id"],))
+        self.assertEqual(s.days_late(inv), 1)
+        self.assertTrue(s.q("SELECT id FROM proposals WHERE dedupe LIKE 'missed:%'"))
+        self.assertEqual(self.hit("/api/tour/late", {"days": 14}, cookie)[0], 200)
+        self.assertTrue(s.q("SELECT id FROM proposals WHERE dedupe LIKE 'endplan:%' AND status='pending'"))
+        self.assertEqual(s.q1("SELECT plan FROM invoices WHERE number='INV-1001'")["plan"], None)
+
+
 class FakeMCP:
     def __init__(self, *args):
         self.calls = []

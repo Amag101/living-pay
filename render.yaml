@@ -17,6 +17,12 @@ services:
         value: USD
       - key: LIVING_OWNER_PASSWORD
         sync: false
+      - key: LIVING_JUDGE_PASSWORD
+        sync: false
+      - key: LIVING_DEMO_BUYER_EMAIL
+        sync: false
+      - key: LIVING_DEMO_BUYER_PASSWORD
+        sync: false
       - key: PAYPAL_CLIENT_ID
         sync: false
       - key: PAYPAL_CLIENT_SECRET

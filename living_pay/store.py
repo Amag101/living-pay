@@ -141,7 +141,7 @@ MIGRATIONS = {
                  ("min_due", "REAL DEFAULT 0"), ("amount_paid", "REAL DEFAULT 0"),
                  ("paypal_id", "TEXT"), ("paypal_status", "TEXT"), ("payer_url", "TEXT"),
                  ("snapshot", "TEXT"), ("plan", "TEXT"), ("sub_id", "INTEGER"), ("sub_share", "REAL DEFAULT 0"),
-                 ("remind_email", "INTEGER DEFAULT 0")],
+                 ("remind_email", "INTEGER DEFAULT 0"), ("tour", "INTEGER DEFAULT 0")],
 }
 
 

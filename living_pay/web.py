@@ -26,6 +26,7 @@ from living_pay.checkout import (
     calendar_file, capture_checkout, create_checkout, demo_pay, fake_approve, set_reminders,
 )
 from living_pay.paypal_events import paypal_webhook, scheduler
+from living_pay.tour import JUDGE_BLOCKED, judge_may_chat, judge_may_invoice, miss_payment, start_tour, tour_state
 from living_pay.owner import advance_clock, mark_paid, new_invoice, owner_message, paypal_ask_on
 from living_pay.setup import init_db, reset
 
@@ -39,36 +40,43 @@ def owner_password():
     return os.environ.get("LIVING_OWNER_PASSWORD", "")
 
 
-def session_value(expires):
-    # Signed with the password, so changing the password signs everyone out.
-    sig = hmac.new(owner_password().encode(), b"owner:%d" % expires, hashlib.sha256).hexdigest()
-    return "%d.%s" % (expires, sig)
+def judge_password():
+    return os.environ.get("LIVING_JUDGE_PASSWORD", "")
+
+
+def session_value(expires, role="owner"):
+    # Signed with the owner's password, so changing it signs everyone out.
+    sig = hmac.new(owner_password().encode(), b"%s:%d" % (role.encode(), expires), hashlib.sha256).hexdigest()
+    return "%s.%d.%s" % (role, expires, sig)
 
 
 def signed_in(cookie_header):
+    """The role of whoever sent this cookie, "owner" or "judge", or None."""
     if not owner_password():  # only possible on this computer: main() won't serve publicly without one
-        return True
+        return "owner"
     try:
         morsel = SimpleCookie(cookie_header or "").get("living_owner")
     except CookieError:
-        return False
-    if not morsel or "." not in morsel.value:
-        return False
-    expires = morsel.value.split(".", 1)[0]
-    return expires.isdigit() and int(expires) > time.time() \
-        and hmac.compare_digest(morsel.value, session_value(int(expires)))
+        return None
+    parts = morsel.value.split(".") if morsel else []
+    if len(parts) != 3 or parts[0] not in ("owner", "judge") or not parts[1].isdigit() or int(parts[1]) <= time.time():
+        return None
+    return parts[0] if hmac.compare_digest(morsel.value, session_value(int(parts[1]), parts[0])) else None
 
 
 def check_login(password):
-    """True for the right password. Too many wrong guesses lock everyone out for a few minutes."""
+    """The role this password signs in as, or None. Too many wrong guesses lock everyone out for a few minutes."""
     now_s = time.time()
     _login_fails[:] = [s for s in _login_fails if now_s - s < LOGIN_LIMIT[1]]
     if len(_login_fails) >= LOGIN_LIMIT[0]:
         raise ValueError("Too many tries. Please wait a few minutes.")
-    if hmac.compare_digest(str(password or "").encode(), owner_password().encode()):
-        return True
+    given = str(password or "").encode()
+    if hmac.compare_digest(given, owner_password().encode()):
+        return "owner"
+    if judge_password() and hmac.compare_digest(given, judge_password().encode()):
+        return "judge"
     _login_fails.append(now_s)
-    return False
+    return None
 
 
 def is_public(path):
@@ -323,9 +331,9 @@ class Handler(BaseHTTPRequestHandler):
             except KeyError:
                 return self.send_json({"error": "This invoice link isn't valid."}, 404)
         if path == "/api/state":
-            return self.send_json(state())
+            return self.send_json(self.page_state(signed_in(self.headers.get("Cookie"))))
         if path == "/api/audit":
-            return self.send_json(audit_state())
+            return self.send_json(dict(audit_state(), role=signed_in(self.headers.get("Cookie"))))
         if path == "/api/ledger":
             return self.send_json(ledger_state())
         return self.static(STATIC.get(path) or path.lstrip("/"))
@@ -357,11 +365,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def login(self):
         try:
-            if not check_login(self.body().get("password")):
+            role = check_login(self.body().get("password"))
+            if not role:
                 return self.send_json({"error": "That password isn't right."}, 401)
         except ValueError as e:
             return self.send_json({"error": str(e)}, 429)
-        return self.send_cookie(session_value(int(time.time()) + SESSION_SECONDS), SESSION_SECONDS)
+        return self.send_cookie(session_value(int(time.time()) + SESSION_SECONDS, role), SESSION_SECONDS)
+
+    def page_state(self, role):
+        data = dict(state(), role=role)
+        if role == "judge":
+            data["tour"] = tour_state()
+        return data
 
     def do_POST(self):
         path = urlparse(self.path).path
@@ -373,18 +388,30 @@ class Handler(BaseHTTPRequestHandler):
             return self.living_post(path[len("/api/i/"):].split("/"))
         if path == "/login":
             return self.login()
-        if not signed_in(self.headers.get("Cookie")):
+        role = signed_in(self.headers.get("Cookie"))
+        if not role:
             return self.send_json({"error": "Please sign in."}, 401)
         if path == "/logout":
             return self.send_cookie("", 0)
+        judge = role == "judge"
+        if judge and path in JUDGE_BLOCKED:
+            return self.send_json({"error": "The demo login can't change this."}, 403)
         try:
             body = self.body()
             if path == "/api/chat":
                 text = (body.get("text") or "").strip()[:1000]
                 if text:
+                    if judge:
+                        judge_may_chat()
                     owner_message(text)
             elif path == "/api/invoices/new":
+                if judge:
+                    judge_may_invoice()
                 new_invoice(body)
+            elif judge and path == "/api/tour/start":
+                start_tour()
+            elif judge and path == "/api/tour/late":
+                miss_payment(body.get("days"))
             elif path == "/api/invoices/paid":
                 mark_paid(body["id"])
             elif path == "/api/demo/clock":
@@ -415,7 +442,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"error": "bad request: %r" % e}, 400)
         except PayPalError as e:
             return self.send_json({"error": str(e)}, 502)
-        return self.send_json(state())
+        return self.send_json(self.page_state(role))
 
 
 def main():

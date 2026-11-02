@@ -125,7 +125,7 @@ const EVENT = {
   proposed: ["Proposed", ""], approved: ["Approved", "good"], executed: ["Done", "good"], skipped: ["Skipped", ""],
   cancelled: ["Withdrawn", ""], undone: ["Undone", "warn"], failed: ["Failed", "bad"], observed: ["Watched", ""],
   trust_changed: ["Trust", "warn"], automation_saved: ["Rule saved", "good"], paused: ["Paused", "warn"], resumed: ["Resumed", "good"],
-  connected: ["Connected", "good"], disconnected: ["Disconnected", "warn"], connection_lost: ["Access lost", "bad"], setting_changed: ["Setting", "warn"], paypal_question: ["PayPal", ""],  payment_received: ["Payment", "good"], invoice_paid: ["Paid", "good"], reminders_changed: ["Reminders", ""],
+  connected: ["Connected", "good"], disconnected: ["Disconnected", "warn"], connection_lost: ["Access lost", "bad"], setting_changed: ["Setting", "warn"], paypal_question: ["PayPal", ""], tour_started: ["Tour", ""], tour_late: ["Tour", ""],  payment_received: ["Payment", "good"], invoice_paid: ["Paid", "good"], reminders_changed: ["Reminders", ""],
 };
 let last = "";
 
@@ -138,6 +138,7 @@ async function load() {
   if (document.activeElement !== $("#bizname")) $("#bizname").value = d.business;
   $("#chip").checked = d.discount_chip;
   $("#signout").hidden = !d.login;
+  if (d.role === "judge") { $("#bizname").disabled = $("#bizsave").disabled = $("#chip").disabled = true; }
   $("#rules").innerHTML = d.rules.map((r) => `<li>${esc(r)}</li>`).join("");
   $("#autos").innerHTML = d.automations.map((a) => `
     <div class="card auto">

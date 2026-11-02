@@ -8,6 +8,10 @@ Freelancers and small businesses lose hours chasing invoices, and a client who c
 
 Built for the [PayPal AI Hackathon](https://paypalaihackathon.devpost.com/).
 
+## Try it
+
+Open the [live app](https://living-pay.onrender.com) and sign in with the judge password from our Devpost entry. A guided tour on the first page takes about 3 minutes and needs no setup.
+
 ## How it works
 
 1. **The owner sends an invoice:** who it's for, what it's for and how much. It goes out as a PayPal invoice with its own page.
@@ -87,6 +91,7 @@ The tests run against `fake_paypal.py`, a stand-in that behaves the way the real
 | `living_pay/connectors.py` | PayPal, and practice stand-ins |
 | `living_pay/checkout.py`, `paypal_events.py` | Taking payment, and webhooks |
 | `living_pay/paypal_api.py`, `paypal_mcp.py` | PayPal's REST API and MCP server |
+| `living_pay/tour.py` | The judge's tour and its limits |
 | `living_pay/web.py` | The owner's login, page data and web server |
 | `app/` | The web pages |
 | `fake_paypal.py` | A stand-in for PayPal, for tests and the demo |
