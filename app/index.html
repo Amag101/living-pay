@@ -107,7 +107,6 @@
             <button data-advance="168">+1 week</button>
           </div>
         </div>
-        <div class="card" id="jobs" hidden></div>
         <div class="card" id="emails"></div>
         <div><button class="ghost" id="reset">Start over with fresh data</button></div>
       </div>
@@ -277,12 +276,6 @@ function renderMore() {
   const practice = S.clock !== "real";
   $("#clock").hidden = !practice;
   $("#now").textContent = S.now_nice;
-  const jobs = S.events.filter((e) => e.status === "scheduled" && e.amount);
-  $("#jobs").hidden = !jobs.length;
-  $("#jobs").innerHTML = `<h3>Jobs on your calendar</h3><table><tbody>${jobs.map((e) => `<tr>
-      <td><strong>${esc(e.title)}</strong><div class="faint">${esc(e.name || "")}</div></td>
-      <td class="num">${money(e.amount)}</td>
-      <td class="num"><button data-act="event/complete" data-id="${e.id}">Finished: bill it</button></td></tr>`).join("")}</tbody></table>`;
   $("#emails").innerHTML = `<h3 style="padding-bottom:12px">Emails sent</h3>` + (S.outbox.length ? S.outbox.map((o) => `<div class="mail">
       <strong>${esc(o.subject || "Message")}</strong> <span class="faint">to ${esc(o.to_addr)}</span>
       <div class="body">${esc(o.body)}</div></div>`).join("") : `<div class="mail faint">Nothing yet.</div>`);
@@ -370,7 +363,7 @@ $("#invform").addEventListener("submit", async (e) => {
   const btn = e.target.querySelector("button[type=submit]");
   btn.disabled = true; btn.textContent = "Sending…";
   const before = S.invoices.length;
-  const res = await api("/api/sandbox/invoice/new", Object.fromEntries(new FormData(e.target)));
+  const res = await api("/api/invoices/new", Object.fromEntries(new FormData(e.target)));
   btn.disabled = false; btn.textContent = "Send invoice";
   render(res);
   if (res.failed) { $("#invdialog").close(); return; }
@@ -392,10 +385,9 @@ document.addEventListener("click", async (e) => {
   else if (t.dataset.copy) copy(t.dataset.copy, t);
   else if (t.dataset.markpaid) {
     if (confirm("Mark this invoice as fully paid?\n\nOnly use this if the money reached you outside PayPal, like a bank transfer or cash. It doesn't collect anything."))
-      render(await api("/api/sandbox/invoice/paid", { id: +t.dataset.markpaid }));
+      render(await api("/api/invoices/paid", { id: +t.dataset.markpaid }));
   }
-  else if (t.dataset.advance) render(await api("/api/sandbox/clock/advance", { hours: +t.dataset.advance }));
-  else if (t.dataset.act) render(await api("/api/sandbox/" + t.dataset.act, { id: +t.dataset.id }));
+  else if (t.dataset.advance) render(await api("/api/demo/clock", { hours: +t.dataset.advance }));
   else if (t.dataset.say) say(t.dataset.say);
   else if (t.id === "reset") {
     if (confirm("Delete everything here and start over?")) { last = ""; fillForm.key = null; $("#thread").dataset.init = ""; render(await api("/api/reset", {})); }

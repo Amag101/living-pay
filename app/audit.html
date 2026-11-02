@@ -25,16 +25,12 @@
   .filters { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
   .filters h2 { margin: 0; flex: 1; }
   .filters select { width: auto; }
+  .tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
+  .tabs button { font: inherit; font-weight: 550; border: 0; background: none; color: var(--ink-2); padding: 9px 14px; cursor: pointer; border-bottom: 2px solid transparent; border-radius: 0; margin-bottom: -1px; box-shadow: none; }
+  .tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
   .banner { padding: 12px 16px; border-radius: var(--radius); }
   .banner.ok { background: var(--accent-soft); color: var(--accent); }
   .banner.err { background: var(--bad-soft); color: var(--bad); }
-  .gcard { padding: 16px; display: grid; gap: 12px; }
-  .gcard .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-  .gcard ol { margin: 0; padding-left: 20px; color: var(--ink-2); display: grid; gap: 4px; }
-  .gcard code { background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-size: 12.5px; overflow-wrap: anywhere; }
-  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; font-size: 13px; }
-  .kv dt { color: var(--ink-3); }
-  .kv dd { margin: 0; overflow-wrap: anywhere; }
   .switch { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); }
   .switch input { width: auto; margin-top: 3px; }
   @media (max-width: 640px) {
@@ -58,9 +54,17 @@
 <main class="wrap">
   <div>
     <h1>Settings</h1>
-    <div class="muted">Everything your assistant may do, and everything it has done. <span id="now" hidden></span></div>
+    <div class="muted">What your assistant may do, and everything it has done. <span id="now" hidden></span></div>
   </div>
-  <section>
+  <div class="tabs" id="tabs" role="tablist" aria-label="Settings">
+    <button role="tab" data-tab="business" aria-selected="true">Business</button>
+    <button role="tab" data-tab="rules" aria-selected="false">Rules</button>
+    <button role="tab" data-tab="automations" aria-selected="false">Automations</button>
+    <button role="tab" data-tab="connections" aria-selected="false">Connections</button>
+    <button role="tab" data-tab="activity" aria-selected="false">Activity</button>
+  </div>
+  <div id="banner" hidden></div>
+  <section data-panel="business">
     <h2>Your business</h2>
     <div class="card" style="padding:14px 18px;display:grid;gap:12px">
       <form id="bizform" class="row" style="gap:8px;align-items:center">
@@ -72,27 +76,22 @@
       <div class="row" id="signout" hidden><button id="logout">Sign out</button></div>
     </div>
   </section>
-  <section>
+  <section data-panel="rules" hidden>
     <h2>What your assistant may agree to</h2>
     <div class="card" style="padding:14px 18px">
       <ul id="rules" style="margin:0;padding-left:18px;display:grid;gap:4px"></ul>
       <p class="faint" style="margin:10px 0 0">To change a rule, just tell your assistant on the Invoices page, like “allow up to 4 payments”.</p>
     </div>
   </section>
-  <section>
+  <section data-panel="automations" hidden>
     <h2>Automations</h2>
     <div class="grid" id="autos"></div>
   </section>
-  <div id="banner" hidden></div>
-  <section>
-    <h2>Google account</h2>
-    <div class="card gcard" id="google"></div>
-  </section>
-  <section>
+  <section data-panel="connections" hidden>
     <h2>Connections</h2>
     <div class="card" id="conns"></div>
   </section>
-  <section>
+  <section data-panel="activity" hidden>
     <div class="filters">
       <h2>Activity</h2>
       <label class="faint" for="filter">Show</label>
@@ -109,13 +108,24 @@
 </main>
 <script>
 const $ = (s) => document.querySelector(s);
+function showTab(name) {
+  document.querySelectorAll("[data-panel]").forEach((p) => { p.hidden = p.dataset.panel !== name; });
+  document.querySelectorAll("#tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
+}
+$("#tabs").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  showTab(b.dataset.tab);
+  history.replaceState(null, "", "#" + b.dataset.tab);
+});
+if (document.querySelector(`[data-panel="${location.hash.slice(1)}"]`)) showTab(location.hash.slice(1));
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const when = (iso) => new Date(iso).toLocaleString("en-GB", { weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+const RULES_WORD = { ALLOW: ["Rules allowed", "good"], ESCALATE: ["Rules asked you", "warn"], DENY: ["Rules refused", "bad"] };
 const EVENT = {
   proposed: ["Proposed", ""], approved: ["Approved", "good"], executed: ["Done", "good"], skipped: ["Skipped", ""],
   cancelled: ["Withdrawn", ""], undone: ["Undone", "warn"], failed: ["Failed", "bad"], observed: ["Watched", ""],
   trust_changed: ["Trust", "warn"], automation_saved: ["Rule saved", "good"], paused: ["Paused", "warn"], resumed: ["Resumed", "good"],
-  connected: ["Connected", "good"], disconnected: ["Disconnected", "warn"], connection_lost: ["Access lost", "bad"], setting_changed: ["Setting", "warn"], paypal_question: ["PayPal", ""], offer_checked: ["Rules check", ""], payment_received: ["Payment", "good"], invoice_paid: ["Paid", "good"], reminders_changed: ["Reminders", ""],
+  connected: ["Connected", "good"], disconnected: ["Disconnected", "warn"], connection_lost: ["Access lost", "bad"], setting_changed: ["Setting", "warn"], paypal_question: ["PayPal", ""],  payment_received: ["Payment", "good"], invoice_paid: ["Paid", "good"], reminders_changed: ["Reminders", ""],
 };
 let last = "";
 
@@ -129,7 +139,6 @@ async function load() {
   $("#chip").checked = d.discount_chip;
   $("#signout").hidden = !d.login;
   $("#rules").innerHTML = d.rules.map((r) => `<li>${esc(r)}</li>`).join("");
-  renderGoogle(d.google);
   $("#autos").innerHTML = d.automations.map((a) => `
     <div class="card auto">
       <div class="name">${esc(a.name)}</div>
@@ -141,7 +150,8 @@ async function load() {
   const all = $("#filter").value === "all";
   const rows = d.log.filter((r) => all || r.event !== "proposed" || r.proposal_status === "pending");
   $("#log").innerHTML = rows.map((r) => {
-    const [word, cls] = EVENT[r.event] || [r.event, ""];
+    const rules = r.event === "offer_checked" && r.data.verdict && RULES_WORD[r.data.verdict.decision];
+    const [word, cls] = rules || EVENT[r.event] || [r.event, ""];
     const steps = (r.data.steps || []).map((s) => `<li>${esc(s.label)}${s.inverse ? "" : s.connector === "owner" ? "" : " <span class=faint>(can't be reversed)</span>"}</li>`).join("");
     const reversed = (r.data.reversed || []).map((s) => `<li>${esc(s)}</li>`).join("");
     const kept = (r.data.not_reversible || []).map((s) => `<li>Not reversible: ${esc(s)}</li>`).join("");
@@ -159,41 +169,6 @@ async function load() {
   }).join("") || `<tr><td colspan="4" class="faint" style="text-align:center;padding:28px">No activity yet.</td></tr>`;
 }
 
-function renderGoogle(g) {
-  $("#google").closest("section").hidden = !g.configured && !g.connected;
-  let html;
-  if (!g.crypto) {
-    html = `<div>Encrypted token storage needs the <code>cryptography</code> package. Run <code>pip3 install cryptography</code> and restart the server.</div>`;
-  } else if (!g.configured) {
-    html = `<div><strong>Connect Gmail and Google Calendar.</strong> First create a Google OAuth client (one-time setup):</div>
-      <ol>
-        <li>In Google Cloud Console, create a project and enable the <strong>Gmail API</strong> and <strong>Google Calendar API</strong>.</li>
-        <li>Set up the OAuth consent screen as <em>External</em>, in testing mode, and add your Google address as a test user.</li>
-        <li>Create an OAuth client ID of type <strong>Web application</strong> with this redirect URI: <code>${esc(g.redirect_uri)}</code></li>
-        <li>Download the client JSON, save it as <code>google_client.json</code> next to <code>server.py</code>, and restart the server.</li>
-      </ol>`;
-  } else if (!g.connected) {
-    html = `<div>Living Pay will ask Google for two permissions: <strong>send email as you</strong> (it can't read your inbox) and <strong>see and edit your calendar events</strong>. Tokens are encrypted before they're stored.</div>
-      <div class="row"><a href="/oauth/google/start"><button class="primary">Connect Google</button></a></div>`;
-  } else {
-    const bad = g.status !== "connected";
-    html = `<dl class="kv">
-        <dt>Account</dt><dd>${esc(g.account)} <span class="pill ${bad ? "bad" : "good"}">${bad ? "needs reconnecting" : "connected"}</span></dd>
-        <dt>Calendar</dt><dd>${g.last_sync ? "synced " + esc(when(g.last_sync)) : "not synced yet"}, every ${g.sync_seconds} seconds</dd>
-        ${g.last_error ? `<dt>Last error</dt><dd>${esc(g.last_error)}</dd>` : ""}
-      </dl>
-      <label class="switch"><input type="checkbox" id="live" ${g.live_email ? "checked" : ""}>
-        <span><strong>Send emails to clients for real</strong><br><span class="faint">${g.live_email
-          ? "On: invoices and reminders go to your clients' real addresses from your Gmail."
-          : "Off (test mode): every email meant for a client is sent to you instead, marked with who it was for."}</span></span></label>
-      <div class="row">
-        ${bad ? `<a href="/oauth/google/start"><button class="primary">Reconnect Google</button></a>` : `<button id="gsync">Sync now</button>`}
-        <button id="gdisc">Disconnect</button>
-      </div>
-      <div class="faint">To bill a job, add #done to the event title in Google Calendar. Living Pay takes the client from the event's guests and the amount from its description, for example "Amount: 1200".</div>`;
-  }
-  if ($("#google").dataset.html !== html) { $("#google").innerHTML = html; $("#google").dataset.html = html; }
-}
 
 async function postJSON(path, body) {
   const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
@@ -210,12 +185,6 @@ function showBanner(text, ok) {
   b.hidden = false;
 }
 
-(function () {
-  const p = new URLSearchParams(location.search);
-  if (p.get("google") === "connected") showBanner("Google connected. Living Pay is now reading your calendar and sends email through Gmail.", true);
-  if (p.get("google_error")) showBanner(p.get("google_error"), false);
-  if (p.toString()) history.replaceState(null, "", "/audit");
-})();
 
 $("#bizform").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -231,19 +200,10 @@ $("#logout").addEventListener("click", async () => {
 });
 
 document.addEventListener("change", (e) => {
-  if (e.target.id === "chip") return postJSON("/api/settings/discount_chip", { on: e.target.checked });
-  if (e.target.id !== "live") return;
-  const on = e.target.checked;
-  if (on && !confirm("Send invoices and reminders to clients' real email addresses?")) { e.target.checked = false; return; }
-  postJSON("/api/settings/live_email", { on });
+  if (e.target.id === "chip") postJSON("/api/settings/discount_chip", { on: e.target.checked });
 });
 
 document.addEventListener("click", async (e) => {
-  if (e.target.closest("#gsync")) { e.target.disabled = true; await postJSON("/api/connections/google/sync"); return; }
-  if (e.target.closest("#gdisc")) {
-    if (confirm("Disconnect Google? Your stored tokens will be deleted and access revoked.")) await postJSON("/api/connections/google/disconnect");
-    return;
-  }
   const b = e.target.closest("[data-undo]");
   if (!b) return;
   b.disabled = true;

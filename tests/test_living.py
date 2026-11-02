@@ -23,8 +23,8 @@ os.environ.update({
     "PAYPAL_WEBHOOK_ID": FAKE.webhook_id, "PUBLIC_URL": "https://living.example",
 })
 
-import server as s  # noqa: E402
-from paypal_api import PayPalError  # noqa: E402
+from support import app as s  # noqa: E402
+from living_pay.paypal_api import PayPalError  # noqa: E402
 
 
 def owner_last():
@@ -37,9 +37,8 @@ class Living(unittest.TestCase):
         s._paypal = None
         s._chat_times.clear()
         s.reset()
-        s.sandbox("event/complete", {"id": 1})  # Brand workshop, $1,200, Ruth (a returning client)
-        s.owner_message("approve #%d" % s.q1("SELECT id FROM proposals WHERE status='pending'")["id"])
-        self.inv = s.q1("SELECT * FROM invoices WHERE event_id=1")
+        s.new_invoice({"contact_id": 1, "title": "Brand workshop", "amount": 1200, "sub_id": 1, "sub_share": 300})  # Ruth, a returning client
+        self.inv = s.q1("SELECT * FROM invoices ORDER BY id DESC")
         self.token = self.inv["token"]
 
     def say(self, text):
@@ -55,6 +54,28 @@ class Living(unittest.TestCase):
         order = s.create_checkout(self.token, which)
         s.fake_approve(self.token, order["order_id"])
         return s.capture_checkout(self.token, order["order_id"]), order["amount"]
+
+    # ---- the rules are visible ----
+
+    def test_the_page_shows_the_rules_deciding(self):
+        self.say("Can I split this into 3 payments?")
+        checks = [c["body"] for c in s.living_state(self.token)["chat"] if c["role"] == "check"]
+        self.assertEqual(len(checks), 1)
+        self.assertIn("allowed", checks[0])
+        self.say("Give me 90% off")
+        checks = [c["body"] for c in s.living_state(self.token)["chat"] if c["role"] == "check"]
+        self.assertIn("not allowed", checks[-1])
+
+    def test_rules_checks_stay_out_of_what_claude_reads(self):
+        seen = []
+        keep_on, keep_create = s.LLM.client, s.LLM.create
+        s.LLM.client, s.LLM.create = object(), lambda **kw: seen.append(kw["messages"])
+        try:
+            self.say("Can I split this into 3 payments?")
+            self.say("Thanks")
+        finally:
+            s.LLM.client, s.LLM.create = keep_on, keep_create
+        self.assertFalse([m for m in seen[-1] if "Rules check" in str(m["content"])])
 
     # ---- the page ----
 
@@ -291,21 +312,21 @@ class Living(unittest.TestCase):
         self.say("Can I split this into 3 payments?")
         self.pay()  # next payment: Mon 23 Nov
         emails = lambda: [r for r in FAKE.reminders if r["subject"].startswith("Your next payment")]
-        s.sandbox("clock/advance", {"hours": 24 * 20})
+        s.advance_clock(24 * 20)
         self.assertEqual(emails(), [])  # nobody asked yet, and it's too early anyway
         s.set_reminders(self.token, True)
         self.assertEqual(emails(), [])  # 10 days out
-        s.sandbox("clock/advance", {"hours": 24 * 7})  # 3 days out
+        s.advance_clock(24 * 7)  # 3 days out
         self.assertEqual(len(emails()), 1)
         self.assertIn("$400", emails()[0]["note"])
         self.assertIn("/i/%s" % self.token, emails()[0]["note"])
-        s.sandbox("clock/advance", {"hours": 24})
+        s.advance_clock(24)
         self.assertEqual(len(emails()), 1)
 
     def test_no_reminder_unless_asked_or_if_already_paid(self):
         self.say("Can I split this into 3 payments?")
         self.pay()
-        s.sandbox("clock/advance", {"hours": 24 * 27})
+        s.advance_clock(24 * 27)
         self.assertEqual([r for r in FAKE.reminders if r["subject"].startswith("Your next payment")], [])
         s.set_reminders(self.token, False)
         with self.assertRaises(ValueError):  # no plan, no reminders

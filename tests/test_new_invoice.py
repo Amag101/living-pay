@@ -20,7 +20,7 @@ os.environ.update({
     "PAYPAL_WEBHOOK_ID": FAKE.webhook_id, "PUBLIC_URL": "https://living.example",
 })
 
-import server as s  # noqa: E402
+from support import app as s  # noqa: E402
 
 
 def bot():
@@ -28,7 +28,7 @@ def bot():
 
 
 def send(**fields):
-    s.sandbox("invoice/new", dict({"contact_id": "2", "title": "Menu photography reshoot", "amount": "450",
+    s.new_invoice(dict({"contact_id": "2", "title": "Menu photography reshoot", "amount": "450",
                                    "due_days": "10", "sub_share": "0", "sub_id": ""}, **fields))
     return s.q1("SELECT * FROM invoices ORDER BY id DESC")
 

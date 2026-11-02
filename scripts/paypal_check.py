@@ -32,8 +32,8 @@ os.environ.pop("PAYPAL_API_BASE", None)  # always the real sandbox here
 if os.environ.get("PAYPAL_ENV", "sandbox") != "sandbox":
     sys.exit("This check only runs against the sandbox. Set PAYPAL_ENV=sandbox.")
 
-import paypal_api as paypal  # noqa: E402
-from paypal_api import PayPalError  # noqa: E402
+from living_pay import paypal_api as paypal  # noqa: E402
+from living_pay.paypal_api import PayPalError  # noqa: E402
 
 RESULTS = []
 
@@ -75,7 +75,7 @@ def main():
     state = {}
 
     def body(n):
-        return paypal.build_invoice("LI-CHECK-%s-%d" % (tag, n), {"name": "Check Client", "email": buyer},
+        return paypal.build_invoice("LP-CHECK-%s-%d" % (tag, n), {"name": "Check Client", "email": buyer},
                                     [{"name": "Living Pay check", "amount": 1200}], "USD", due,
                                     note="Created by Living Pay's sandbox check.", invoicer_name="Kora Studio")
 
@@ -149,7 +149,7 @@ def main():
     check("9. Cancel a sent invoice (what undo does)", cancel)
 
     def order():
-        o = client.create_order(400, "USD", None, "li:check", "Living Pay check", request_id="li-check-%s-o" % tag)
+        o = client.create_order(400, "USD", None, "lp:check", "Living Pay check", request_id="li-check-%s-o" % tag)
         assert o.get("status") == "CREATED", o.get("status")
         return "order %s created; a buyer approves it in PayPal's popup" % o["id"]
     check("10. Create a checkout order (Orders v2)", order)

@@ -15,7 +15,7 @@ os.environ["LIVING_LLM"] = "off"
 for k in ("PAYPAL_CLIENT_ID", "PAYPAL_CLIENT_SECRET", "PAYPAL_API_BASE"):
     os.environ.pop(k, None)  # offline accounting: these tests are about the rules
 
-import server as s  # noqa: E402
+from support import app as s  # noqa: E402
 
 
 def bot():
@@ -85,7 +85,7 @@ class Rules(unittest.TestCase):
         self.assertEqual((s.mandate()["max_installments"], s.mandate()["max_extension_days"]), (12, 10))
 
     def test_reminder_rules_still_go_to_reminders(self):
-        msg = self.change("remind clients 48 hours before appointments by email")
+        msg = self.change("remind clients at 5 and 15 days overdue")
         self.assertNotIn("invoice agent", msg)
 
 

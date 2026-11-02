@@ -1,0 +1,151 @@
+"""Taking payment on the invoice page, and what happens after a client pays."""
+
+from datetime import timezone, date, timedelta, datetime
+import secrets
+import urllib.request
+
+from living_pay import paypal_api as paypal
+from living_pay.config import CURRENCY_CODE, LOCK
+from living_pay.store import ex, get_setting, iso, log, now, q1
+from living_pay.invoices import cash, due_now, invoice_balance, invoice_link, plan_of, plan_rows
+from living_pay.connectors import connector, paypal_client, paypal_mode
+from living_pay.automations import enqueue, payment_received, process_queue
+from living_pay.negotiator import chat_add, living, living_state
+
+
+def checkout_amount(inv, which):
+    if inv["status"] != "sent":
+        raise ValueError("This invoice is %s" % ("already paid" if inv["status"] == "paid" else "no longer active"))
+    amount = invoice_balance(inv) if which == "balance" else due_now(inv)
+    if amount <= 0:
+        raise ValueError("Nothing is due on this invoice")
+    return amount
+
+
+def create_checkout(token, which):
+    """Creates a PayPal order for the amount the server says is due. The browser never names a price."""
+    with LOCK:
+        inv = living(token)
+        if not inv:
+            raise KeyError("invoice")
+        amount = checkout_amount(inv, which)
+    order = paypal_client().create_order(amount, CURRENCY_CODE, None, "lp:%d" % inv["id"],
+                                         "%s %s: %s" % (get_setting("business"), inv["number"], inv.get("title") or ""),
+                                         request_id="lp-order-%d-%s" % (inv["id"], secrets.token_hex(6)),
+                                         brand_name=get_setting("business"))
+    with LOCK:
+        ex("INSERT INTO checkout_orders(id,invoice_id,amount,status,at) VALUES(?,?,?,?,?)",
+           (order["id"], inv["id"], amount, order.get("status", "CREATED"), iso(now())))
+    return {"order_id": order["id"], "amount": amount}
+
+
+def thank_client(inv, amount):
+    chat_add(inv["id"], "agent", "Thank you! %s received. %s" % (cash(amount), (
+        "This invoice is now fully paid." if inv["status"] == "paid"
+        else "%s is left, and %s is due next." % (cash(invoice_balance(inv)), cash(due_now(inv))))))
+
+
+def advance_plan(inv):
+    """After a payment: the next installment becomes the minimum, and PayPal's note shows what's left."""
+    if inv["status"] == "sent" and plan_of(inv):
+        connector("accounting").execute("update_terms", {"invoice_id": inv["id"], "min_due": due_now(inv)})
+
+
+def settle_payment(inv, amount, reference, method, actor):
+    """Records a payment, moves a plan on to its next installment and tells both sides."""
+    acc = connector("accounting")
+    result = acc.execute("record_payment", {"invoice_id": inv["id"], "amount": amount, "method": method,
+                                            "reference": reference, "note": "Paid on Living Pay"})
+    if result.get("duplicate"):
+        return result
+    payment_received(inv, result, actor)
+    inv = q1("SELECT * FROM invoices WHERE id=?", (inv["id"],))
+    advance_plan(inv)
+    thank_client(inv, amount)
+    return result
+
+
+def capture_checkout(token, order_id):
+    with LOCK:
+        inv = living(token)
+        row = q1("SELECT * FROM checkout_orders WHERE id=?", (order_id,))
+        if not inv or not row or row["invoice_id"] != inv["id"]:
+            raise KeyError("order")
+    captured = paypal_client().capture_order(order_id, request_id="li-capture-" + order_id)
+    cap_id, amount, status = paypal.capture_of(captured)
+    with LOCK:
+        ex("UPDATE checkout_orders SET status=? WHERE id=?", (captured.get("status"), order_id))
+        if status != "COMPLETED":
+            raise ValueError("PayPal didn't complete the payment (%s). You haven't been charged." % status)
+        settle_payment(living(token), amount, "capture:%s" % cap_id, "PAYPAL", "client")
+        process_queue()
+    return living_state(token)
+
+
+def fake_approve(token, order_id):
+    """Fake mode only: stands in for the buyer approving the order in PayPal's popup."""
+    if paypal_mode() != "fake":
+        raise KeyError("fake approval")
+    with LOCK:
+        inv = living(token)
+        row = q1("SELECT * FROM checkout_orders WHERE id=?", (order_id,))
+        if not inv or not row or row["invoice_id"] != inv["id"]:
+            raise KeyError("order")
+    req = urllib.request.Request(paypal.base_url() + "/__fake/orders/%s/approve" % order_id,
+                                 data=b"{}", method="POST", headers={"Content-Type": "application/json"})
+    urllib.request.urlopen(req, timeout=10).read()
+    return {"approved": order_id}
+
+
+def demo_pay(token, which):
+    """Offline mode only (no PayPal configured): records a simulated payment."""
+    if paypal_mode() != "offline":
+        raise KeyError("demo payment")
+    with LOCK:
+        inv = living(token)
+        if not inv:
+            raise KeyError("invoice")
+        settle_payment(inv, checkout_amount(inv, which), "demo:%s" % secrets.token_hex(6), "OTHER", "client")
+        process_queue()
+    return living_state(token)
+
+
+def set_reminders(token, on):
+    with LOCK:
+        inv = living(token)
+        if not inv:
+            raise KeyError("invoice")
+        if inv["status"] != "sent" or not plan_of(inv):
+            raise ValueError("Reminders are for invoices with a payment plan still to pay")
+        ex("UPDATE invoices SET remind_email=? WHERE id=?", (1 if on else 0, inv["id"]))
+        log("reminders_changed", "%s reminders %s for %s" % ("Email", "on" if on else "off", inv["number"]),
+            actor="client", data={"invoice_id": inv["id"]})
+        if on:  # a payment may already be close
+            enqueue("clock.tick", {"at": iso(now())})
+            process_queue()
+    return living_state(token)
+
+
+def calendar_file(token):
+    """An .ics of the payments still to make, with an alert the day before each one."""
+    with LOCK:
+        inv = living(token)
+        if not inv:
+            raise KeyError("invoice")
+        rows, biz, link = [r for r in plan_rows(inv) if r["owed"] > 0], get_setting("business"), invoice_link(inv)
+        def text(s):
+            return s.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
+        lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Living Pay//EN", "CALSCALE:GREGORIAN"]
+        for r in rows:
+            start = date.fromisoformat(r["due"])
+            lines += ["BEGIN:VEVENT", "UID:%s-%s@livingpay" % (inv["token"], r["due"]),
+                      "DTSTAMP:%s" % datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
+                      "DTSTART;VALUE=DATE:%s" % start.strftime("%Y%m%d"),
+                      "DTEND;VALUE=DATE:%s" % (start + timedelta(days=1)).strftime("%Y%m%d"),
+                      "SUMMARY:%s" % text("Pay %s to %s" % (cash(r["owed"]), biz)),
+                      "DESCRIPTION:%s" % text("Invoice %s. Pay here: %s" % (inv["number"], link)),
+                      "URL:%s" % link,
+                      "BEGIN:VALARM", "ACTION:DISPLAY", "TRIGGER:-P1D",
+                      "DESCRIPTION:%s" % text("Payment to %s due tomorrow" % biz), "END:VALARM", "END:VEVENT"]
+        lines.append("END:VCALENDAR")
+        return ("\r\n".join(lines) + "\r\n").encode(), inv["number"]

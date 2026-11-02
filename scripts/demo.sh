@@ -13,6 +13,6 @@ export PAYPAL_API_BASE=http://localhost:8791 PAYPAL_CLIENT_ID=fake PAYPAL_CLIENT
 export PAYPAL_WEBHOOK_ID=WH-FAKE-1 LIVING_DB=demo.db
 
 if [ -n "$ANTHROPIC_API_KEY" ]; then echo "Claude: on"; else echo "Claude: off (keyword rules)"; fi
-echo "Owner view:   http://localhost:8790"
+echo "Open:         http://localhost:8790"
 echo "Money ledger: http://localhost:8790/ledger"
 python3 server.py

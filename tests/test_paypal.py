@@ -23,9 +23,9 @@ os.environ.update({
     "PAYPAL_WEBHOOK_ID": FAKE.webhook_id, "PUBLIC_URL": "https://living.example",
 })
 
-import paypal_api as paypal  # noqa: E402
-import server as s  # noqa: E402
-from paypal_api import PayPalError  # noqa: E402
+from living_pay import paypal_api as paypal  # noqa: E402
+from support import app as s  # noqa: E402
+from living_pay.paypal_api import PayPalError  # noqa: E402
 
 
 def payer(path, body=None):
@@ -52,11 +52,9 @@ def bot():
 
 
 def invoice_brand_workshop():
-    """Marks the 1,200 Brand workshop done, approves the invoice, returns (local row, PayPal invoice)."""
-    s.sandbox("event/complete", {"id": 1})
-    pid = s.q1("SELECT id FROM proposals WHERE status='pending'")["id"]
-    s.owner_message("approve #%d" % pid)
-    inv = s.q1("SELECT * FROM invoices WHERE event_id=1")
+    """Sends the $1,200 Brand workshop invoice and returns (local row, PayPal invoice)."""
+    s.new_invoice({"contact_id": 1, "title": "Brand workshop", "amount": 1200, "sub_id": 1, "sub_share": 300})
+    inv = s.q1("SELECT * FROM invoices ORDER BY id DESC")
     return inv, FAKE.invoices[inv["paypal_id"]]
 
 
@@ -239,23 +237,22 @@ class PayPalInvoicing(unittest.TestCase):
 
     def test_owner_marking_paid_records_it_in_paypal(self):
         inv, pp = invoice_brand_workshop()
-        s.sandbox("invoice/paid", {"id": inv["id"]})
+        s.mark_paid(inv["id"])
         self.assertEqual(FAKE.invoices[pp["id"]]["status"], "MARKED_AS_PAID")
         self.assertEqual(FAKE.invoices[pp["id"]]["payments"]["transactions"][0]["method"], "BANK_TRANSFER")
         self.assertEqual(s.q1("SELECT status FROM invoices WHERE id=?", (inv["id"],))["status"], "paid")
 
     def test_invoices_from_before_paypal_stay_local(self):
-        s.sandbox("invoice/paid", {"id": 2})  # INV-1001 was seeded without a PayPal id
+        s.mark_paid(2)  # INV-1001 was seeded without a PayPal id
         self.assertEqual(s.q1("SELECT status FROM invoices WHERE id=2")["status"], "paid")
         self.assertEqual(FAKE.invoices, {})
 
     def test_paypal_outage_fails_the_action_without_a_local_invoice(self):
         FAKE.fail_next = (400, {"name": "INVALID_REQUEST", "message": "bad"})
-        s.sandbox("event/complete", {"id": 1})
-        pid = s.q1("SELECT id FROM proposals WHERE status='pending'")["id"]
-        s.owner_message("approve #%d" % pid)
-        self.assertEqual(s.q1("SELECT status FROM proposals WHERE id=?", (pid,))["status"], "failed")
-        self.assertIsNone(s.q1("SELECT id FROM invoices WHERE event_id=1"))
+        before = len(s.q("SELECT id FROM invoices"))
+        s.new_invoice({"contact_id": 1, "title": "Brand workshop", "amount": 1200, "sub_id": 1, "sub_share": 300})
+        self.assertEqual(s.q1("SELECT status FROM proposals ORDER BY id DESC")["status"], "failed")
+        self.assertEqual(len(s.q("SELECT id FROM invoices")), before)
         self.assertIn("Nothing else was changed", bot())
 
 

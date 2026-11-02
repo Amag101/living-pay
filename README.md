@@ -76,13 +76,18 @@ The tests run against `fake_paypal.py`, a stand-in that behaves the way the real
 
 | Path | What it is |
 |---|---|
-| `server.py` | The app: invoices, the assistant, approvals and the web server |
-| `policy.py` | The rules that decide what the assistant may agree to |
-| `paypal_api.py` | The PayPal REST client |
-| `paypal_mcp.py` | The read-only connection to PayPal's MCP server |
-| `fake_paypal.py` | A stand-in for PayPal, for tests and the demo |
-| `google_api.py`, `vault.py` | Optional Gmail sending, with encrypted tokens |
+| `server.py` | Starts the app |
+| `living_pay/policy.py` | The rules that decide what the assistant may agree to |
+| `living_pay/negotiator.py` | The assistant on each invoice |
+| `living_pay/rules.py` | The owner's rules, set in plain English and widened when earned |
+| `living_pay/owner.py` | The owner's assistant, approvals and new invoices |
+| `living_pay/automations.py` | Automations, and the executor that runs and undoes actions |
+| `living_pay/connectors.py` | PayPal, and practice stand-ins |
+| `living_pay/checkout.py`, `paypal_events.py` | Taking payment, and webhooks |
+| `living_pay/paypal_api.py`, `paypal_mcp.py` | PayPal's REST API and MCP server |
+| `living_pay/web.py` | The owner's login, page data and web server |
 | `app/` | The web pages |
+| `fake_paypal.py` | A stand-in for PayPal, for tests and the demo |
 
 ## License
 

@@ -1,4 +1,3 @@
-google_client.json
 *.db
 *.db-*
 __pycache__/

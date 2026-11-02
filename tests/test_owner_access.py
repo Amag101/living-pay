@@ -20,8 +20,8 @@ os.environ["LIVING_LLM"] = "off"
 for k in ("PAYPAL_CLIENT_ID", "PAYPAL_CLIENT_SECRET", "PAYPAL_API_BASE"):
     os.environ.pop(k, None)
 
-import paypal_mcp  # noqa: E402
-import server as s  # noqa: E402
+from living_pay import paypal_mcp  # noqa: E402
+from support import app as s  # noqa: E402
 
 PASSWORD = "test-owner-password"
 
@@ -198,11 +198,11 @@ class Budget(unittest.TestCase):
 
 
 class Reminders(unittest.TestCase):
-    def test_paypal_sends_reminders_for_its_invoices_without_gmail(self):
+    def test_paypal_sends_reminders_for_its_invoices(self):
         c = {"id": 1, "email": "a@example.com", "phone": None}
-        step = s.reminder_step({"id": 7, "paypal_id": "INV2-1"}, c, "email", "Subject", "Body", "reminder")
+        step = s.reminder_step({"id": 7, "paypal_id": "INV2-1"}, c, "Subject", "Body", "reminder")
         self.assertEqual((step["connector"], step["op"]), ("accounting", "remind"))
-        self.assertEqual(s.reminder_step({"id": 7, "paypal_id": None}, c, "email", "S", "B", "r")["connector"], "email")
+        self.assertEqual(s.reminder_step({"id": 7, "paypal_id": None}, c, "S", "B", "r")["connector"], "email")
 
 
 if __name__ == "__main__":

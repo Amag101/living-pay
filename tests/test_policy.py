@@ -10,8 +10,8 @@ from datetime import date
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
-import policy  # noqa: E402
-from policy import ALLOW, DENY, ESCALATE, check  # noqa: E402
+from living_pay import policy  # noqa: E402
+from living_pay.policy import ALLOW, DENY, ESCALATE, check  # noqa: E402
 
 TODAY = date(2026, 10, 26)
 

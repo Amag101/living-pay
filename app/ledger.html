@@ -43,11 +43,15 @@
   .ag-cell[col-id="undo"] { display: flex; align-items: center; }
   .undo { min-height: 28px; font: inherit; font-size: 12px; line-height: 18px; padding: 2px 10px; border-radius: 8px; border: 1px solid var(--line);
           background: var(--card); color: var(--ink); cursor: pointer; }
-  .rules { margin-top: 14px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; box-shadow: var(--shadow); }
-  .rules h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; }
-  .rules ul { margin: 0; padding-left: 18px; columns: 2; column-gap: 32px; }
-  @media (max-width: 720px) { .rules ul { columns: 1; } }
-  .rules .h { color: var(--muted); font-size: 13px; margin-top: 8px; }
+  .ag-row { cursor: default; }
+  .drill .ag-row { cursor: pointer; }
+  .prog { display: flex; align-items: center; gap: 8px; height: 100%; }
+  .prog i { flex: 1; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; display: block; }
+  .prog i b { display: block; height: 100%; background: var(--accent); }
+  .prog span { font-size: 12px; color: var(--muted); min-width: 32px; text-align: right; font-variant-numeric: tabular-nums; }
+  .chip { display: inline-flex; gap: 6px; align-items: center; padding: 4px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 13px; }
+  .chip button { border: 0; background: none; color: inherit; cursor: pointer; font: inherit; padding: 0; }
+  .export { font: inherit; padding: 7px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; }
 </style>
 </head>
 <body>
@@ -63,21 +67,25 @@
   <div class="pagehead"><h1 id="title">Ledger</h1><span class="sub" id="now"></span></div>
   <section class="kpis" id="kpis" aria-label="Totals"></section>
   <div class="bar">
-    <input id="q" type="search" placeholder="Search client, invoice, reason…" aria-label="Search the ledger">
+    <div class="seg" id="views" role="group" aria-label="View">
+      <button aria-pressed="true" data-v="activity">Activity</button><button aria-pressed="false" data-v="invoices">Invoices</button>
+      <button aria-pressed="false" data-v="clients">Clients</button>
+    </div>
     <div class="seg" id="kinds" role="group" aria-label="Show">
       <button aria-pressed="true" data-k="">All</button><button aria-pressed="false" data-k="Request">Requests</button>
       <button aria-pressed="false" data-k="Payment">Payments</button><button aria-pressed="false" data-k="Payout">Payouts</button>
-      <button aria-pressed="false" data-k="Invoice">Invoices</button>
     </div>
+    <input id="q" type="search" placeholder="Search…" aria-label="Search the ledger">
+    <span class="chip" id="focus" hidden><span id="focustext"></span><button id="clearfocus" aria-label="Clear">✕</button></span>
+    <button class="export" id="export">Export CSV</button>
     <span class="live" id="live">Live</span>
   </div>
-  <div class="grid-card"><div id="grid"></div></div>
-  <section class="rules" id="rules"></section>
+  <div class="grid-card" id="gridcard"><div id="grid"></div></div>
 </div>
 <script>
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-let L = null, api = null, kind = "";
+let L = null, api = null, kind = "", view = "activity";
 
 function cash(x) {
   if (x === null || x === undefined || x === "") return "";
@@ -89,39 +97,113 @@ function cash(x) {
 const STATUS = {applied: "good", approved: "good", paid: "good", received: "good", success: "good", succeeded: "good",
   pending_owner: "warn", sent: "", unclaimed: "warn", pending: "warn", countered: "warn",
   denied: "bad", declined: "bad", void: "muted", cancelled: "muted", returned: "muted", reverted: "muted", failed: "bad"};
-const LABEL = {pending_owner: "waiting for you", applied: "applied", denied: "blocked", sent: "open", void: "cancelled"};
-const VERDICT = {ALLOW: ["good", "Agent agreed"], ESCALATE: ["warn", "Asked you"], DENY: ["bad", "Blocked"], OWNER: ["", "Your counter"]};
+const LABEL = {pending_owner: "waiting for you", applied: "applied", denied: "refused", sent: "open", void: "cancelled"};
+const VERDICT = {ALLOW: ["good", "Allowed"], ESCALATE: ["warn", "Asked you"], DENY: ["bad", "Refused"], OWNER: ["", "Your counter"]};
 
 const pill = (cls, text) => `<span class="pill ${cls}">${esc(text)}</span>`;
 
-const columns = [
-  {field: "when", headerName: "When", width: 150, sort: null, comparator: (a, b, x, y) => (x.data.at || "").localeCompare(y.data.at || "")},
-  {field: "kind", headerName: "Type", width: 105, filter: true},
-  {field: "invoice", headerName: "Invoice", width: 105, filter: true},
-  {field: "client", headerName: "Client / payee", width: 160, filter: true},
-  {field: "what", headerName: "What", flex: 2, minWidth: 260, tooltipField: "what", wrapText: false},
-  {field: "verdict", headerName: "Policy", width: 130,
-   cellRenderer: (p) => p.value ? pill(...VERDICT[p.value]) : ""},
-  {field: "status", headerName: "Status", width: 140, enableCellChangeFlash: true,
-   cellRenderer: (p) => p.value ? pill(STATUS[p.value] ?? "", LABEL[p.value] || p.value.replace(/_/g, " ")) : ""},
-  {field: "amount", headerName: "Amount", width: 120, type: "rightAligned", enableCellChangeFlash: true,
-   valueFormatter: (p) => cash(p.value), cellClass: (p) => p.value < 0 ? "neg" : ""},
-  {field: "by", headerName: "By", width: 140},
-  {field: "why", headerName: "Why", flex: 1, minWidth: 200, tooltipField: "why"},
-  {field: "undo", headerName: "", width: 90, sortable: false, filter: false, pinned: "right",
-   cellRenderer: (p) => p.value ? `<button class="undo" data-undo="${Number(p.value)}">Undo</button>` : ""},
-];
+const progress = (p) => {
+  if (!p.data || p.node.rowPinned) return "";
+  const pct = p.data.total ? Math.round(100 * p.data.paid / p.data.total) : 0;
+  return `<div class="prog"><i><b style="width:${pct}%"></b></i><span>${pct}%</span></div>`;
+};
+const money = {type: "rightAligned", valueFormatter: (p) => cash(p.value), filter: "agNumberColumnFilter", enableCellChangeFlash: true};
+
+const VIEWS = {
+  activity: {
+    rows: () => L.rows, id: (d) => d.id, file: "activity",
+    columns: [
+      {field: "when", headerName: "When", width: 150, comparator: (a, b, x, y) => (x.data.at || "").localeCompare(y.data.at || "")},
+      {field: "kind", headerName: "Type", width: 105, filter: true},
+      {field: "invoice", headerName: "Invoice", width: 115, filter: true},
+      {field: "client", headerName: "Client / payee", width: 160, filter: true},
+      {field: "what", headerName: "What", flex: 2, minWidth: 260, tooltipField: "what", filter: true},
+      {field: "verdict", headerName: "Rules", width: 130, filter: true,
+       valueFormatter: (p) => p.value ? VERDICT[p.value][1] : "",
+       cellRenderer: (p) => p.value ? pill(...VERDICT[p.value]) : ""},
+      {field: "status", headerName: "Status", width: 140, enableCellChangeFlash: true, filter: true,
+       cellRenderer: (p) => p.value ? pill(STATUS[p.value] ?? "", LABEL[p.value] || p.value.replace(/_/g, " ")) : ""},
+      {field: "amount", headerName: "Amount", width: 120, ...money, cellClass: (p) => p.value < 0 ? "neg" : ""},
+      {field: "why", headerName: "Why", flex: 1, minWidth: 200, tooltipField: "why", filter: true},
+      {field: "undo", headerName: "", width: 90, sortable: false, filter: false, pinned: "right", suppressCsvExport: true,
+       cellRenderer: (p) => p.value ? `<button class="undo" data-undo="${Number(p.value)}">Undo</button>` : ""},
+    ],
+    // Only real money moving counts towards the total: requests and invoices are promises.
+    total: (rows) => ({when: "Money moved", amount: rows.filter((r) => r.kind === "Payment" || r.kind === "Payout").reduce((n, r) => n + r.amount, 0)}),
+  },
+  invoices: {
+    rows: () => L.invoices, id: (d) => d.id, file: "invoices", drill: (d) => show("activity", d.invoice),
+    columns: [
+      {field: "invoice", headerName: "Invoice", width: 125, filter: true},
+      {field: "client", headerName: "Client", width: 170, filter: true},
+      {field: "what", headerName: "For", flex: 1, minWidth: 180, filter: true},
+      {field: "total", headerName: "Total", width: 115, ...money},
+      {field: "paid", headerName: "Paid", width: 115, ...money},
+      {field: "balance", headerName: "Left to pay", width: 125, ...money},
+      {headerName: "Progress", width: 170, sortable: false, cellRenderer: progress, suppressCsvExport: true},
+      {field: "plan", headerName: "Plan", width: 115, filter: true},
+      {field: "next_due", headerName: "Next due", width: 130, comparator: (a, b, x, y) => (x.data.due_sort || "9").localeCompare(y.data.due_sort || "9"),
+       cellClass: (p) => p.data && p.data.overdue ? "neg" : ""},
+      {field: "status", headerName: "Status", width: 110, filter: true,
+       cellRenderer: (p) => p.value ? pill(STATUS[p.value] ?? "", LABEL[p.value] || p.value) : ""},
+    ],
+    total: (rows) => ({invoice: "Total", total: sum(rows, "total"), paid: sum(rows, "paid"), balance: sum(rows, "balance")}),
+  },
+  clients: {
+    rows: () => L.clients, id: (d) => d.id, file: "clients", drill: (d) => show("invoices", d.client),
+    columns: [
+      {field: "client", headerName: "Client", flex: 1, minWidth: 180, filter: true},
+      {field: "invoices", headerName: "Invoices", width: 105, type: "rightAligned", filter: "agNumberColumnFilter"},
+      {field: "total", headerName: "Billed", width: 120, ...money},
+      {field: "paid", headerName: "Paid", width: 120, ...money},
+      {field: "balance", headerName: "Left to pay", width: 125, ...money},
+      {headerName: "Collected", width: 170, sortable: false, cellRenderer: progress, suppressCsvExport: true},
+      {field: "overdue", headerName: "Overdue", width: 105, type: "rightAligned", filter: "agNumberColumnFilter", cellClass: (p) => p.value ? "neg" : ""},
+      {field: "requests", headerName: "Requests", width: 105, type: "rightAligned", filter: "agNumberColumnFilter"},
+      {field: "refused", headerName: "Rules refused", width: 125, type: "rightAligned", filter: "agNumberColumnFilter"},
+    ],
+    total: (rows) => ({client: "Total", invoices: sum(rows, "invoices"), total: sum(rows, "total"), paid: sum(rows, "paid"), balance: sum(rows, "balance"),
+                       overdue: sum(rows, "overdue"), requests: sum(rows, "requests"), refused: sum(rows, "refused")}),
+  },
+};
+const sum = (rows, key) => rows.reduce((n, r) => n + (r[key] || 0), 0);
 
 function makeGrid() {
   if (agGrid.ModuleRegistry && agGrid.AllCommunityModule) agGrid.ModuleRegistry.registerModules([agGrid.AllCommunityModule]);
   const theme = agGrid.themeQuartz.withParams({ accentColor: "#0070ba", foregroundColor: "#001c43", borderColor: "#dde4ec", headerBackgroundColor: "#eff3f8" });
   api = agGrid.createGrid($("#grid"), {
-    theme, columnDefs: columns, rowData: [], getRowId: (p) => p.data.id,
-    defaultColDef: {sortable: true, resizable: true, suppressHeaderMenuButton: true},
+    theme, columnDefs: VIEWS[view].columns, rowData: [], getRowId: (p) => p.data.id,
+    defaultColDef: {sortable: true, resizable: true, cellDataType: false},
     rowHeight: 40, headerHeight: 38, animateRows: true, tooltipShowDelay: 300,
-    isExternalFilterPresent: () => !!kind, doesExternalFilterPass: (n) => n.data.kind === kind,
-    overlayNoRowsTemplate: '<span style="color:var(--muted)">Nothing yet. Finish a job in the owner view to send the first invoice.</span>',
+    isExternalFilterPresent: () => view === "activity" && !!kind, doesExternalFilterPass: (n) => n.data.kind === kind,
+    onModelUpdated: updateTotal,
+    onRowClicked: (e) => { if (!e.node.rowPinned && VIEWS[view].drill && !e.event.target.closest("button")) VIEWS[view].drill(e.data); },
+    overlayNoRowsTemplate: '<span style="color:var(--muted)">Nothing here yet. Send your first invoice from the Invoices page.</span>',
   });
+}
+
+function updateTotal() {
+  const rows = [];
+  api.forEachNodeAfterFilter((n) => rows.push(n.data));
+  api.setGridOption("pinnedBottomRowData", rows.length ? [VIEWS[view].total(rows)] : []);
+}
+
+function show(next, focus) {
+  view = next;
+  $("#views").querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.v === view)));
+  $("#kinds").hidden = view !== "activity";
+  $("#gridcard").classList.toggle("drill", !!VIEWS[view].drill);
+  api.setGridOption("columnDefs", VIEWS[view].columns);
+  api.resetColumnState();  // each view keeps its own widths, not the last view's
+  api.setGridOption("rowData", L ? VIEWS[view].rows() : []);
+  setFocus(focus || "");
+}
+
+function setFocus(text) {
+  $("#focus").hidden = !text;
+  $("#focustext").textContent = text;
+  $("#q").value = text;
+  api.setGridOption("quickFilterText", text);
 }
 
 function renderKpis() {
@@ -130,26 +212,11 @@ function renderKpis() {
     ["Outstanding", cash(k.outstanding), "still owed by clients"],
     ["Collected", cash(k.collected), "payments received"],
     ["Paid out", cash(k.paid_out), "to subcontractors"],
-    ["Agent agreed", k.agent_agreed, "requests within your rules"],
-    ["Asked you", k.owner_decided, "requests outside them"],
-    ["Blocked", k.blocked, "requests nobody should agree to"],
+    ["Rules allowed", k.agent_agreed, "requests within your rules"],
+    ["Rules asked you", k.owner_decided, "requests outside them"],
+    ["Rules refused", k.blocked, "requests nobody should agree to"],
   ];
   $("#kpis").innerHTML = tiles.map(([l, v, h]) => `<div class="kpi"><div class="l">${l}</div><div class="v">${esc(v)}</div><div class="h">${h}</div></div>`).join("");
-}
-
-function renderRules() {
-  const r = L.rules;
-  const items = [
-    `Up to <b>${r.early_pay_discount_pct}%</b> off for paying the whole balance now`,
-    r.max_discount_pct ? `Up to <b>${r.max_discount_pct}%</b> off with no condition` : `No discount without paying in full now`,
-    `Requests above <b>${r.escalate_discount_up_to_pct}%</b> off are blocked`,
-    r.floor_amount ? `Never below <b>${cash(r.floor_amount)}</b> in total` : `No minimum total set`,
-    `Payment plans of up to <b>${r.max_installments}</b> payments, at least <b>${r.min_first_payment_pct}%</b> up front, at most <b>${r.max_installment_gap_days}</b> days apart`,
-    r.installments_for === "repeat_clients" ? `Plans only for returning clients` : `Plans for any client`,
-    `Due dates moved up to <b>${r.max_extension_days}</b> days; more than <b>${r.escalate_extension_up_to_days}</b> is blocked`,
-  ];
-  $("#rules").innerHTML = `<h2>The agent's rules</h2><ul>${items.map((i) => `<li>${i}</li>`).join("")}</ul>
-    <div class="h">Anything between "agreed" and "blocked" comes to your phone. These rules are checked in code, so nothing a client types can change them.</div>`;
 }
 
 async function undo(pid, btn) {
@@ -163,9 +230,9 @@ async function refresh() {
     const r = await fetch("/api/ledger");
     L = await r.json();
     document.title = `${L.business} ledger`;
-    $("#now").textContent = L.now + (L.mode === "fake" ? " · simulated PayPal sandbox" : L.mode === "offline" ? " · PayPal not connected" : " · PayPal sandbox");
-    renderKpis(); renderRules();
-    api.setGridOption("rowData", L.rows);
+    $("#now").textContent = L.now + (L.mode === "paypal" ? " · PayPal sandbox" : " · practice mode");
+    renderKpis();
+    api.setGridOption("rowData", VIEWS[view].rows());
     $("#live").textContent = "Live · updated " + new Date().toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"});
   } catch (e) {
     $("#live").textContent = "Can't reach the server";
@@ -176,7 +243,10 @@ $("#grid").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-undo]");
   if (b) undo(b.dataset.undo, b);
 });
-$("#q").addEventListener("input", (e) => api.setGridOption("quickFilterText", e.target.value));
+$("#q").addEventListener("input", (e) => { $("#focus").hidden = true; api.setGridOption("quickFilterText", e.target.value); });
+$("#clearfocus").addEventListener("click", () => setFocus(""));
+$("#views").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) show(b.dataset.v); });
+$("#export").addEventListener("click", () => api.exportDataAsCsv({fileName: `living-pay-${VIEWS[view].file}.csv`}));
 $("#kinds").addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b) return;
   kind = b.dataset.k;

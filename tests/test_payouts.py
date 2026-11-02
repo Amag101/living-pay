@@ -21,7 +21,7 @@ os.environ.update({
     "PAYPAL_WEBHOOK_ID": FAKE.webhook_id, "PUBLIC_URL": "https://living.example",
 })
 
-import server as s  # noqa: E402
+from support import app as s  # noqa: E402
 
 
 def bot():
@@ -38,9 +38,8 @@ class Payouts(unittest.TestCase):
         s._paypal = None
         s._chat_times.clear()
         s.reset()
-        s.sandbox("event/complete", {"id": 1})  # Brand workshop: $1,200, Ada's share $300
-        s.owner_message("approve #%d" % pending()["id"])
-        self.inv = s.q1("SELECT * FROM invoices WHERE event_id=1")
+        s.new_invoice({"contact_id": 1, "title": "Brand workshop", "amount": 1200, "sub_id": 1, "sub_share": 300})  # Ada's share is $300
+        self.inv = s.q1("SELECT * FROM invoices ORDER BY id DESC")
 
     def pay_in_full(self):
         order = s.create_checkout(self.inv["token"], "balance")
@@ -122,9 +121,8 @@ class Payouts(unittest.TestCase):
         self.pay_in_full()
         s.owner_message("approve")
         s.owner_message("auto pay subcontractors")
-        s.sandbox("event/complete", {"id": 4})  # Menu redesign kickoff: Ada again, $200
-        s.owner_message("approve #%d" % pending()["id"])
-        inv = s.q1("SELECT * FROM invoices WHERE event_id=4")
+        s.new_invoice({"contact_id": 2, "title": "Menu redesign", "amount": 800, "sub_id": 1, "sub_share": 200})
+        inv = s.q1("SELECT * FROM invoices ORDER BY id DESC")
         order = s.create_checkout(inv["token"], "balance")
         s.fake_approve(inv["token"], order["order_id"])
         s.capture_checkout(inv["token"], order["order_id"])
@@ -134,7 +132,7 @@ class Payouts(unittest.TestCase):
     def test_offline_payouts_without_paypal(self):
         saved = os.environ.pop("PAYPAL_CLIENT_ID")
         try:
-            s.sandbox("invoice/paid", {"id": self.inv["id"]})
+            s.mark_paid(self.inv["id"])
             s.owner_message("approve")
             self.assertEqual(s.q1("SELECT status FROM payouts")["status"], "sent")
         finally:

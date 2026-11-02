@@ -15,7 +15,7 @@ os.environ["LIVING_LLM"] = "off"
 for k in ("PAYPAL_CLIENT_ID", "PAYPAL_CLIENT_SECRET", "PAYPAL_API_BASE"):
     os.environ.pop(k, None)
 
-import server as s  # noqa: E402
+from support import app as s  # noqa: E402
 
 
 def bot():
@@ -30,7 +30,7 @@ class Growth(unittest.TestCase):
 
     def invoice(self, amount=1000):
         self.n += 1
-        s.sandbox("invoice/new", {"contact_id": str(1 + self.n % 3), "title": "Job %d" % self.n,
+        s.new_invoice({"contact_id": str(1 + self.n % 3), "title": "Job %d" % self.n,
                                   "amount": str(amount), "due_days": "14"})
         return s.q1("SELECT token FROM invoices ORDER BY id DESC")["token"]
 
