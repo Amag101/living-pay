@@ -293,6 +293,12 @@ class Living(unittest.TestCase):
         self.assertEqual(s.refunded_invoice(res)["id"], self.inv["id"])
         self.assertIsNone(s.refunded_invoice({"custom_id": "li:check", "links": []}))
 
+    def test_a_refund_from_another_copy_of_the_app_is_ignored(self):
+        self.pay()
+        res = {"custom_id": "lp:%d" % self.inv["id"],
+               "links": [{"rel": "up", "href": "https://api.paypal.test/v2/payments/captures/NOT-OURS"}]}
+        self.assertIsNone(s.refunded_invoice(res))
+
     def test_a_refund_of_something_else_is_ignored(self):
         self.pay()
         hook_body = {"id": "R1", "amount": {"value": "5.00"}, "links": []}

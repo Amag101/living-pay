@@ -53,9 +53,10 @@ def refund_source(resource):
 
 def refunded_invoice(resource):
     """Which invoice a refund belongs to: through its capture, or the id we put on the order."""
-    pay = q1("SELECT invoice_id FROM payments WHERE reference=?", (refund_source(resource),))
-    if pay:
-        return q1("SELECT * FROM invoices WHERE id=?", (pay["invoice_id"],))
+    source = refund_source(resource)
+    if source:  # a capture we never recorded belongs to someone else on this PayPal account
+        pay = q1("SELECT invoice_id FROM payments WHERE reference=?", (source,))
+        return q1("SELECT * FROM invoices WHERE id=?", (pay["invoice_id"],)) if pay else None
     m = re.match(r"^l[ip]:(\d+)$", resource.get("custom_id") or "")
     return q1("SELECT * FROM invoices WHERE id=?", (int(m.group(1)),)) if m else None
 
