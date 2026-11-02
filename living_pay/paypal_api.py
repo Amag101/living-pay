@@ -184,6 +184,12 @@ class Client:
         return self.call("POST", "/v2/checkout/orders/%s/capture" % order_id, {}, request_id,
                          representation=True)
 
+    def refund_capture(self, capture_id, amount, currency, note=None, request_id=None):
+        body = {"amount": money(amount, currency)}
+        if note:
+            body["note_to_payer"] = note[:255]
+        return self.call("POST", "/v2/payments/captures/%s/refund" % capture_id, body, request_id, representation=True)
+
     # ---- Payouts v1 ------------------------------------------------------
 
     def create_payout(self, batch_id, receiver_email, amount, currency, note, subject, request_id=None):

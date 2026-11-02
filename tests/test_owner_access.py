@@ -160,6 +160,11 @@ class JudgeLogin(Login):
         forged = "living_owner=" + value.replace("judge.", "owner.", 1)
         self.assertEqual(self.hit("/api/state", cookie=forged)[0], 401)
 
+    def test_judge_and_strangers_cannot_refund(self):
+        for path in ("/api/refunds/send", "/api/refunds/decline"):
+            self.assertEqual(self.hit(path, {"invoice_id": 1, "amount": 1, "request_id": 1}, self.judge())[0], 403, path)
+            self.assertEqual(self.hit(path, {"invoice_id": 1, "amount": 1, "request_id": 1})[0], 401, path)
+
     def test_owner_cannot_use_tour_routes(self):
         self.assertEqual(self.hit("/api/tour/start", {}, self.login())[0], 404)
 

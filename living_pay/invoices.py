@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta
 
 from living_pay import policy
 from living_pay.config import PUBLIC_URL
-from living_pay.store import get_setting, nice_date, now, q1
+from living_pay.store import get_setting, nice_date, now, q, q1
 
 
 def invoice_total(inv):
@@ -15,6 +15,26 @@ def invoice_total(inv):
 
 def invoice_balance(inv):
     return round(max(invoice_total(inv) - (inv.get("amount_paid") or 0), 0), 2)
+
+
+def refund_sources(inv):
+    """The payments this app can send money back through, newest first, with what's left on each.
+    A bank transfer the owner marked as paid can't be refunded through PayPal, so it isn't here."""
+    rows = []
+    for p in q("SELECT * FROM payments WHERE invoice_id=? AND (reference LIKE 'capture:%' OR reference LIKE 'demo:%') "
+               "ORDER BY id DESC", (inv["id"],)):
+        back = q1("SELECT COALESCE(SUM(amount),0) n FROM refunds WHERE payment_ref=?", (p["reference"],))["n"]
+        left = round(p["amount"] - back, 2)
+        if left > 0:
+            rows.append({"reference": p["reference"], "left": left})
+    return rows
+
+
+def refundable(inv):
+    if inv["status"] not in ("sent", "paid"):
+        return 0
+    net = round((inv["amount_paid"] or 0) - (inv["refunded"] or 0), 2)
+    return max(0, min(round(sum(r["left"] for r in refund_sources(inv)), 2), net))
 
 
 def invoice_link(inv):

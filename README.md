@@ -26,6 +26,7 @@ Open the [live app](https://living-pay.onrender.com) and sign in with the judge 
 - **The rules are code, not a prompt.** Claude can only propose an offer. `policy.py` then allows it, sends it to the owner, or declines it, so nothing a client types can talk it past the rules.
 - **Autonomy is earned.** After the owner approves the same kind of request three times, the assistant asks to handle those itself. An undo narrows the rule back.
 - **Changes to an invoice can be undone,** from the assistant or the ledger, and every action is logged with the reason. A payment that has gone through can't be undone here, and a subcontractor payout can only be stopped while PayPal is still holding it.
+- **Only the owner can give money back.** A client can ask, and the assistant can pass that on, but it has no way to refund. Neither does the judge's login.
 - **The owner's assistant can only read PayPal.** Ask "who hasn't paid yet?" and Claude looks it up through PayPal's MCP server, limited in code to five read-only tools. It has no way to refund, cancel or send.
 
 ## What it uses
@@ -65,7 +66,8 @@ Without a Claude key, simple keyword rules stand in for the assistant.
 
 ## What it doesn't do yet
 
-- Refunds and disputes are handled in PayPal, not here. When a refund or reversal happens, Living Pay corrects its numbers and tells the owner, but PayPal's own invoice page keeps showing the original payment.
+- Disputes are handled in PayPal, not here. When a refund or reversal happens, Living Pay corrects its numbers and tells the owner, but PayPal's own invoice page keeps showing the original payment.
+- Only payments taken on the invoice page can be refunded from Living Pay. Refund a payment made on PayPal's own invoice page in PayPal.
 - A payment plan is an agreement, not an automatic charge: the client comes back to pay each instalment. Living Pay reminds them when one is missed, and asks the owner whether to end the plan at 14 days late.
 - PayPal lists payments taken on the invoice page as recorded by the seller, because they arrive through Orders and are then recorded on the invoice.
 - Sandbox only. It hasn't handled real money.

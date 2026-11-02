@@ -43,14 +43,19 @@ def scheduler():
             print("paypal poll:", repr(e))
 
 
-def refunded_invoice(resource):
-    """Which invoice a refund belongs to: through its capture, or the id we put on the order."""
+def refund_source(resource):
+    """The payment a refund came from, from its link back to the capture."""
     for link in resource.get("links", []):
         if link.get("rel") == "up" and "/captures/" in link.get("href", ""):
-            pay = q1("SELECT invoice_id FROM payments WHERE reference=?",
-                     ("capture:%s" % link["href"].rstrip("/").rsplit("/", 1)[1],))
-            if pay:
-                return q1("SELECT * FROM invoices WHERE id=?", (pay["invoice_id"],))
+            return "capture:%s" % link["href"].rstrip("/").rsplit("/", 1)[1]
+    return None
+
+
+def refunded_invoice(resource):
+    """Which invoice a refund belongs to: through its capture, or the id we put on the order."""
+    pay = q1("SELECT invoice_id FROM payments WHERE reference=?", (refund_source(resource),))
+    if pay:
+        return q1("SELECT * FROM invoices WHERE id=?", (pay["invoice_id"],))
     m = re.match(r"^l[ip]:(\d+)$", resource.get("custom_id") or "")
     return q1("SELECT * FROM invoices WHERE id=?", (int(m.group(1)),)) if m else None
 
@@ -131,7 +136,8 @@ def paypal_webhook(headers, raw):
             with LOCK:
                 inv = refunded_invoice(res)
                 if inv:
-                    record_refund(inv, res["amount"]["value"], "%s:%s" % (kind, res["id"]), kind)
+                    record_refund(inv, res["amount"]["value"], "%s:%s" % (kind, res["id"]), kind,
+                                  payment_ref=refund_source(res))
                     process_queue()
         if etype.startswith("PAYMENT.PAYOUTS-ITEM."):
             item = event.get("resource", {})

@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY, at TEXT, proposal_id INTEGER, automation_id INTEGER,
   event TEXT, actor TEXT, detail TEXT, data TEXT);
 CREATE TABLE IF NOT EXISTS refunds (
-  id INTEGER PRIMARY KEY, invoice_id INTEGER, amount REAL, kind TEXT, reference TEXT UNIQUE, at TEXT);
+  id INTEGER PRIMARY KEY, invoice_id INTEGER, amount REAL, kind TEXT, reference TEXT UNIQUE, at TEXT, payment_ref TEXT);
 CREATE TABLE IF NOT EXISTS payments (
   id INTEGER PRIMARY KEY, invoice_id INTEGER, amount REAL, method TEXT,
   reference TEXT UNIQUE, external_id TEXT, at TEXT);
@@ -137,6 +137,7 @@ def who(contact):
 
 
 MIGRATIONS = {
+    "refunds": [("payment_ref", "TEXT")],
     "outbox": [("external_id", "TEXT"), ("note", "TEXT")],
     # amount is the invoiced price; the negotiated terms sit next to it.
     "invoices": [("token", "TEXT"), ("title", "TEXT"), ("discount_pct", "REAL DEFAULT 0"),

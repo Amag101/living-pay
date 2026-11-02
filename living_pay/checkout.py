@@ -1,13 +1,15 @@
 """Taking payment on the invoice page, and what happens after a client pays."""
 
 from datetime import timezone, date, timedelta, datetime
+import json
+import re
 import secrets
 import urllib.request
 
 from living_pay import paypal_api as paypal
 from living_pay.config import CURRENCY_CODE, LOCK
 from living_pay.store import ex, get_setting, iso, log, money, now, post, q, q1, who
-from living_pay.invoices import cash, due_now, invoice_balance, invoice_link, plan_of, plan_rows
+from living_pay.invoices import cash, due_now, invoice_balance, invoice_link, plan_of, plan_rows, refund_sources, refundable
 from living_pay.connectors import connector, paypal_client, paypal_mode
 from living_pay.automations import enqueue, payment_received, process_queue
 from living_pay.negotiator import chat_add, living, living_state
@@ -45,17 +47,17 @@ def thank_client(inv, amount):
         else "%s is left, and %s is due next." % (cash(invoice_balance(inv)), cash(due_now(inv))))))
 
 
-def record_refund(inv, amount, reference, kind):
-    """Money going back to the client, as PayPal reports it. A refund is the owner's choice, so what's
-    still owed stays as it was. A reversal is taken back against the owner's will, so that money is owed again."""
+def record_refund(inv, amount, reference, kind, payment_ref=None, actor="paypal", note=None):
+    """Money going back to the client. A refund is the owner's choice, so what's still owed stays as it was.
+    A reversal is taken back against the owner's will, so that money is owed again."""
     if q1("SELECT id FROM refunds WHERE reference=?", (reference,)):
         return False
     net = round((inv["amount_paid"] or 0) - (inv["refunded"] or 0), 2)
     amount = round(min(float(amount), net), 2)
     if amount <= 0:
         return False
-    ex("INSERT INTO refunds(invoice_id,amount,kind,reference,at) VALUES(?,?,?,?,?)",
-       (inv["id"], amount, kind, reference, iso(now())))
+    ex("INSERT INTO refunds(invoice_id,amount,kind,reference,at,payment_ref) VALUES(?,?,?,?,?,?)",
+       (inv["id"], amount, kind, reference, iso(now()), payment_ref))
     c = q1("SELECT * FROM contacts WHERE id=?", (inv["contact_id"],))
     if kind == "reversal":
         ex("UPDATE invoices SET amount_paid=?, status='sent', paid_at=NULL WHERE id=?",
@@ -69,8 +71,8 @@ def record_refund(inv, amount, reference, kind):
         whole = refunded >= (inv["amount_paid"] or 0) - 0.005 and inv["status"] == "paid"
         ex("UPDATE invoices SET refunded=?, status=? WHERE id=?",
            (refunded, "refunded" if whole else inv["status"], inv["id"]))
-        chat_add(inv["id"], "agent", "%s has refunded %s to you. It should reach you through PayPal." % (
-            get_setting("business"), cash(amount)))
+        chat_add(inv["id"], "agent", "%s has refunded %s to you. It should reach you through PayPal.%s" % (
+            get_setting("business"), cash(amount), " Their note: %s" % note if note else ""))
         text = "**Refund:** %s went back to %s on %s." % (money(amount), who(c), inv["number"])
         if inv["status"] == "sent":
             text += " The %s still unpaid stays open, so reminders continue unless you cancel it in PayPal." % (
@@ -80,9 +82,68 @@ def record_refund(inv, amount, reference, kind):
     for p in paid_out:
         text += " You already paid %s %s for this job, and this doesn't change that." % (p["name"], money(p["amount"]))
     log("refund_" + kind, "%s of %s on %s went back to %s" % (kind.capitalize(), money(amount), inv["number"], who(c)),
-        actor="paypal", data={"invoice_id": inv["id"], "amount": amount, "reference": reference})
+        actor=actor, data={"invoice_id": inv["id"], "amount": amount, "reference": reference})
     post("bot", text)
+    inv = q1("SELECT * FROM invoices WHERE id=?", (inv["id"],))
+    if not refundable(inv):  # nothing left to give back, so an open request has nothing to decide
+        ex("UPDATE proposals SET status='cancelled', decided_at=? WHERE kind='refund_request' AND status='pending' "
+           "AND dedupe LIKE ?", (iso(now()), "refundreq:%d:%%" % inv["id"]))
     return True
+
+
+def refund_invoice(invoice_id, amount, note="", key="", request_id=None):
+    """The owner sends money back through PayPal. Nothing else can start this: not the assistant, not a client,
+    and not the judge's login."""
+    if not re.fullmatch(r"[A-Za-z0-9-]{8,40}", str(key)):
+        key = secrets.token_hex(8)  # with a key from the browser, a double click refunds only once
+    note = str(note or "").strip()[:255]
+    with LOCK:
+        inv = q1("SELECT * FROM invoices WHERE id=?", (invoice_id,))
+        if not inv:
+            raise ValueError("That invoice doesn't exist")
+        most = refundable(inv)
+        try:
+            amount = round(float(amount), 2)
+        except (TypeError, ValueError):
+            raise ValueError("The refund amount must be a number")
+        if amount <= 0:
+            raise ValueError("The refund must be more than zero")
+        if amount > most + 0.005:
+            raise ValueError("You can refund up to %s on this invoice" % money(most))
+        steps, left = [], amount
+        for source in refund_sources(inv):
+            take = round(min(left, source["left"]), 2)
+            if take > 0:
+                steps.append((source["reference"], take))
+                left = round(left - take, 2)
+    # PayPal is called outside the lock. If its webhook arrives first, record_refund sees the same reference.
+    for i, (ref, take) in enumerate(steps):
+        if ref.startswith("capture:"):
+            out = paypal_client().refund_capture(ref.split(":", 1)[1], take, CURRENCY_CODE, note or None,
+                                                 request_id="lp-refund-%s-%d" % (key, i))
+            reference = "refund:%s" % out["id"]
+        else:
+            reference = "refund:%s-%d" % (key, i)
+        with LOCK:
+            record_refund(q1("SELECT * FROM invoices WHERE id=?", (invoice_id,)), take, reference, "refund",
+                          payment_ref=ref, actor="owner", note=note)
+    with LOCK:
+        if request_id:
+            ex("UPDATE proposals SET status='executed', decided_at=? WHERE id=? AND kind='refund_request'",
+               (iso(now()), request_id))
+        process_queue()
+
+
+def decline_refund_request(request_id):
+    with LOCK:
+        p = q1("SELECT * FROM proposals WHERE id=? AND kind='refund_request' AND status='pending'", (request_id,))
+        if not p:
+            raise ValueError("That request has already been answered")
+        ex("UPDATE proposals SET status='skipped', decided_at=? WHERE id=?", (iso(now()), p["id"]))
+        draft = json.loads(p["draft"])
+        log("skipped", p["summary"], p["id"], None, "owner")
+        chat_add(draft["invoice_id"], "agent", "%s has decided not to refund this. Please contact them directly "
+                 "if you'd like to talk about it." % get_setting("business"))
 
 
 def advance_plan(inv):

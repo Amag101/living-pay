@@ -604,5 +604,5 @@ def sweep_stale():
 
 
 def latest_pending():
-    rows = q("SELECT * FROM proposals WHERE status='pending' ORDER BY id DESC")
+    rows = q("SELECT * FROM proposals WHERE status='pending' AND kind!='refund_request' ORDER BY id DESC")
     return rows[0] if rows else None

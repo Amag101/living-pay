@@ -15,6 +15,7 @@ from living_pay.paypal_api import PayPalError
 from living_pay.config import APP_DIR, LOCK, PORT
 from living_pay.store import get_setting, iso, log, money, nice, nice_date, now, q, q1, set_setting
 from living_pay.invoices import (
+    refundable,
     days_late, describe_ask, describe_terms, invoice_balance, invoice_total, missed_rows, plan_rows,
 )
 from living_pay.connectors import connector, paypal_mode
@@ -23,6 +24,7 @@ from living_pay.automations import TEMPLATES, TRUST_LABELS, automation_params
 from living_pay.negotiator import client_message, living_state, mandate
 from living_pay.rules import rules_lines
 from living_pay.checkout import (
+    decline_refund_request, refund_invoice,
     calendar_file, capture_checkout, create_checkout, demo_pay, fake_approve, set_reminders,
 )
 from living_pay.paypal_events import paypal_webhook, scheduler
@@ -91,6 +93,7 @@ def state():
         for i in invoices:
             i["days_overdue"] = days_late(i)
             i["late_amount"] = round(sum(r["owed"] for r in missed_rows(i)), 2)
+            i["refundable"] = refundable(i)
             i["total"], i["balance"] = invoice_total(i), invoice_balance(i) if i["status"] == "sent" else 0
         return {
             "now": iso(t), "now_nice": nice(t), "demo": paypal_mode() != "paypal", "ask_paypal": paypal_ask_on(),
@@ -403,6 +406,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/logout":
             return self.send_cookie("", 0)
         judge = role == "judge"
+        if judge and path.startswith("/api/refunds/"):
+            return self.send_json({"error": "Only the owner can give money back. The demo login and the assistant "
+                                            "can't."}, 403)
         if judge and path in JUDGE_BLOCKED:
             return self.send_json({"error": "The demo login can't change this."}, 403)
         try:
@@ -417,6 +423,11 @@ class Handler(BaseHTTPRequestHandler):
                 if judge:
                     judge_may_invoice()
                 new_invoice(body)
+            elif path == "/api/refunds/send":
+                refund_invoice(body["invoice_id"], body.get("amount"), body.get("note"), body.get("key"),
+                               body.get("request_id"))
+            elif path == "/api/refunds/decline":
+                decline_refund_request(body["request_id"])
             elif judge and path == "/api/tour/start":
                 start_tour()
             elif judge and path == "/api/tour/late":

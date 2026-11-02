@@ -52,10 +52,15 @@ def describe_automation(auto):
     return "**%s** (%s): %s" % (tpl.name, state, tpl.describe(automation_params(auto)))
 
 
+REFUND_BUTTON_ONLY = "Refunds can't be answered in chat. Use the Refund or Decline button on the request."
+
+
 def approve(pid):
     p = q1("SELECT * FROM proposals WHERE id=?", (pid,)) if pid else latest_pending()
     if not p or p["status"] != "pending":
         return "There's nothing waiting for approval%s." % (" as #%d" % pid if pid else "")
+    if p["kind"] == "refund_request":
+        return REFUND_BUTTON_ONLY
     log("approved", p["summary"], p["id"], p["automation_id"], "owner")
     if p["kind"] == "setup":
         return apply_setup(p)
@@ -89,6 +94,8 @@ def skip(pid):
     p = q1("SELECT * FROM proposals WHERE id=?", (pid,)) if pid else latest_pending()
     if not p or p["status"] != "pending":
         return "There's nothing waiting for approval%s." % (" as #%d" % pid if pid else "")
+    if p["kind"] == "refund_request":
+        return REFUND_BUTTON_ONLY
     ex("UPDATE proposals SET status='skipped', decided_at=? WHERE id=?", (iso(now()), p["id"]))
     log("skipped", p["summary"], p["id"], p["automation_id"], "owner")
     offer_hooks["settled"](json.loads(p["draft"] or "{}"), "declined")

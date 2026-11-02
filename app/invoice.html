@@ -263,7 +263,7 @@ function renderChat() {
   m.innerHTML = S.chat.length ? S.chat.map((c) => `<div class="msg ${c.role === "agent" ? "agent" : c.role}">${esc(c.body)}</div>`).join("")
     : `<div class="msg agent">Hi! I'm the assistant on this invoice from ${esc(S.business)}. I can explain it, set up a payment plan or move the due date. What would help?</div>`;
   if (busy) m.insertAdjacentHTML("beforeend", `<div class="msg agent typing">Thinking…</div>`);
-  const open = S.status === "sent";
+  const open = S.status === "sent" || S.status === "paid";
   $("#text").disabled = !open || busy; $("#sendbtn").disabled = !open || busy;
   // The suggestions stay available, minus any that no longer make sense for this invoice.
   const suggestions = [
