@@ -2,6 +2,8 @@
 
 **The invoice that negotiates for you.**
 
+**Live app:** https://living-pay.onrender.com (PayPal sandbox, no real money)
+
 Freelancers and small businesses lose hours chasing invoices, and a client who can't pay all at once usually just pays late. Living Pay sends a real PayPal invoice with an AI assistant attached. The client can ask it questions and arrange a payment plan, more time or a discount, and then pay. The assistant agrees to what the owner's rules allow, asks the owner about anything else, and declines the rest.
 
 Built for the [PayPal AI Hackathon](https://paypalaihackathon.devpost.com/).
