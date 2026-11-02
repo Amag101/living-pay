@@ -69,6 +69,8 @@
   .msg { max-width: 84%; padding: 9px 12px; border-radius: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
   .msg.client { align-self: flex-end; background: var(--me); color: var(--me-ink); border-bottom-right-radius: 4px; }
   .msg.agent { align-self: flex-start; background: var(--them); border-bottom-left-radius: 4px; }
+  .banner.late { background: var(--bad-soft); color: var(--bad); }
+  .lateword { color: var(--bad); font-weight: 600; }
   .msg.typing { color: var(--muted); font-style: italic; }
   .msg.check { align-self: center; max-width: none; padding: 2px 10px; font-size: 12.5px; font-weight: 600; color: var(--muted); background: none; }
   .chips { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 18px 10px; }
@@ -169,7 +171,7 @@ function render() {
 function planTable(title, style) {
   return `<h2 style="${style || ""}">${esc(title)}</h2>
     <table class="plan">${S.plan.map((p) => `<tr class="${p.owed <= 0 ? "paidrow" : ""}"><td>${p.owed <= 0 ? "✓ " : ""}${esc(p.due)}</td><td class="num">${cash(p.amount)}</td>
-      <td class="num">${p.owed <= 0 ? "Paid" : p.owed < p.amount ? cash(p.owed) + " left" : ""}</td></tr>`).join("")}</table>`;
+      <td class="num ${p.late ? "lateword" : ""}">${p.owed <= 0 ? "Paid" : p.late ? "Late" : p.owed < p.amount ? cash(p.owed) + " left" : ""}</td></tr>`).join("")}</table>`;
 }
 
 function planView() {
@@ -197,10 +199,11 @@ function renderPay() {
   if (!hasChoice) which = "now";
   const amount = which === "balance" ? S.balance : S.due_now;
   const waiting = S.waiting_for_owner ? `<div class="banner">Waiting for ${esc(S.business)} to answer your request for ${esc(S.waiting_for_owner)}.</div>` : "";
-  box.innerHTML = `${waiting}
-    <div class="due"><span>${hasChoice && which === "now" ? (S.due_today ? "Due today" : `Next payment, due ${esc(S.next_due)}`) : "Pay"}</span><strong class="num">${cash(amount)}</strong></div>
+  const late = S.late_amount > 0 ? `<div class="banner late">${cash(S.late_amount)} was due on ${esc(S.late_since)}. Please pay it below, or ask here for more time.</div>` : "";
+  box.innerHTML = `${late}${waiting}
+    <div class="due"><span>${hasChoice && which === "now" ? (S.late_amount > 0 ? "Due now" : S.due_today ? "Due today" : `Next payment, due ${esc(S.next_due)}`) : "Pay"}</span><strong class="num">${cash(amount)}</strong></div>
     ${hasChoice ? `<div class="choice">
-      <label><input type="radio" name="which" value="now" ${which === "now" ? "checked" : ""}>Next payment (${cash(S.due_now)})</label>
+      <label><input type="radio" name="which" value="now" ${which === "now" ? "checked" : ""}>${S.late_amount > 0 ? "What's late" : "Next payment"} (${cash(S.due_now)})</label>
       <label><input type="radio" name="which" value="balance" ${which === "balance" ? "checked" : ""}>Whole balance (${cash(S.balance)})</label></div>` : ""}
     <div id="paypal-buttons"></div>
     <div class="error" id="payerr" hidden></div>

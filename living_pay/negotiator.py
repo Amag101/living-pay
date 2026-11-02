@@ -10,8 +10,8 @@ from living_pay.paypal_api import PayPalError
 from living_pay.config import CURRENCY_CODE, LOCK
 from living_pay.store import ex, first_name, get_setting, iso, log, nice_date, now, post, q, q1, who
 from living_pay.invoices import (
-    cash, describe_terms, discount_needs_full_payment, due_now, invoice_balance, invoice_total, next_due,
-    plan_rows,
+    cash, days_late, describe_terms, discount_needs_full_payment, due_now, invoice_balance, invoice_total,
+    missed_rows, next_due, plan_rows, shift_plan,
 )
 from living_pay.connectors import paypal_mode
 from living_pay.llm import LLM
@@ -54,6 +54,8 @@ def terms_params(inv, kind, terms):
         if terms.get("dropped_discount_pct"):
             params["discount_pct"] = 0
         return params
+    if terms.get("shifts_plan") and inv.get("plan"):
+        return {"due_at": terms["due_at"] + "T12:00", "plan": shift_plan(inv, terms["days"])}
     return {"due_at": terms["due_at"] + "T12:00"}
 
 
@@ -190,6 +192,8 @@ def invoice_facts(inv):
         "total": cash(invoice_total(inv)), "paid_so_far": cash(inv["amount_paid"] or 0),
         "balance": cash(invoice_balance(inv)), "next_payment": cash(due_now(inv)),
         "next_payment_due": next_due(inv)[1],
+        "missed_payments": cash(sum(r["owed"] for r in missed_rows(inv))) if missed_rows(inv) else None,
+        "days_late": days_late(inv) if missed_rows(inv) else 0,
         "today": nice_date(now()),
         "discount_for_paying_in_full_today_pct": mandate()["early_pay_discount_pct"],
         "payment_plan": [{"due": nice_date(r["due"] + "T12:00"), "amount": cash(r["amount"]),
@@ -224,6 +228,9 @@ If the client asks about a discount without saying they'll pay in full now, don'
 them the discount for paying in full today from the facts, with the total it would come to, and ask if they'd \
 like it. Use propose_discount with pay_in_full_now once they say yes. Only request a discount with condition \
 none if they then ask for one without paying in full, or name a price or percentage of their own.
+
+If a plan payment has been missed, say so kindly with the amount and date, and offer more time through \
+propose_extension if they need it.
 
 When the client names their own amounts or dates, request exactly that with the tool straight away, without \
 asking them to confirm. Take a date like "the 15th" as the next one to come, and work out gap_days from today in \
@@ -415,7 +422,10 @@ def living_state(token):
             "due_date": facts["due_date"], "currency": get_setting("currency", "$"),
             "amount": inv["amount"], "discount_pct": inv["discount_pct"] or 0, "total": invoice_total(inv),
             "paid": inv["amount_paid"] or 0, "balance": invoice_balance(inv), "due_now": due_now(inv), "due_today": next_due(inv)[0], "next_due": next_due(inv)[1],
-            "plan": [{"due": nice_date(r["due"] + "T12:00"), "amount": r["amount"], "owed": r["owed"]} for r in rows],
+            "late_amount": round(sum(r["owed"] for r in missed_rows(inv)), 2), "days_late": days_late(inv) if rows else 0,
+            "late_since": nice_date(missed_rows(inv)[0]["due"] + "T12:00") if missed_rows(inv) else None,
+            "plan": [{"due": nice_date(r["due"] + "T12:00"), "amount": r["amount"], "owed": r["owed"],
+                      "late": r["owed"] > 0 and r["due"] < now().date().isoformat()} for r in rows],
             "waiting_for_owner": facts["waiting_for_owner"],
             "chat": q("SELECT role, body, at FROM invoice_chat WHERE invoice_id=? ORDER BY id", (inv["id"],)),
             "plan_view": bool(rows) and (inv["amount_paid"] or 0) > 0, "remind_email": bool(inv["remind_email"]),

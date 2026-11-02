@@ -296,7 +296,23 @@ class PayPalPayouts(Payouts):
         raise ValueError("unknown payouts op " + op)
 
 
-CONNECTORS = {c.name: c for c in [Accounting(), Email(), Payouts()]}
+class InvoiceChat(Connector):
+    """Tells the client something on their invoice page."""
+    name, label = "invoice_chat", "The invoice page"
+
+    def execute(self, op, params):
+        ex("INSERT INTO invoice_chat(invoice_id,role,body,at) VALUES(?,'agent',?,?)",
+           (params["invoice_id"], params["body"], iso(now())))
+        return {}
+
+    def inverse(self, op, params, result):
+        if not params.get("undo_body"):
+            return None
+        return {"connector": self.name, "op": "say", "label": "Tell the client on their invoice page",
+                "params": {"invoice_id": params["invoice_id"], "body": params["undo_body"]}}
+
+
+CONNECTORS = {c.name: c for c in [Accounting(), Email(), Payouts(), InvoiceChat()]}
 PAYPAL_ACCOUNTING = PayPalAccounting()
 _paypal = None
 

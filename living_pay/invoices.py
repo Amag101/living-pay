@@ -1,6 +1,7 @@
 """What an invoice owes: totals, balances and payment plan schedules."""
 
 import json
+from datetime import date, datetime, timedelta
 
 from living_pay import policy
 from living_pay.config import PUBLIC_URL
@@ -70,12 +71,33 @@ def plan_rows(inv):
     return rows
 
 
+def missed_rows(inv):
+    """Plan payments whose date has passed and that are still owed."""
+    if inv["status"] != "sent":
+        return []
+    today = now().date().isoformat()
+    return [r for r in plan_rows(inv) if r["owed"] > 0 and r["due"] < today]
+
+
+def days_late(inv):
+    """How late the invoice is: from the oldest missed plan payment, or from its due date with no plan."""
+    if inv["status"] != "sent":
+        return 0
+    if plan_rows(inv):
+        missed = missed_rows(inv)
+        return (now().date() - date.fromisoformat(missed[0]["due"])).days if missed else 0
+    return max(0, (now().date() - datetime.fromisoformat(inv["due_at"]).date()).days)
+
+
 def due_now(inv):
-    """What the client should pay today: the next installment, or the whole balance."""
+    """What the client should pay today: anything missed plus the next installment, or the whole balance."""
     if inv["status"] != "sent":
         return 0
     owed = [r["owed"] for r in plan_rows(inv) if r["owed"] > 0]
-    return min(owed[0], invoice_balance(inv)) if owed else invoice_balance(inv)
+    if not owed:
+        return invoice_balance(inv)
+    missed = round(sum(r["owed"] for r in missed_rows(inv)), 2)
+    return min(missed or owed[0], invoice_balance(inv))
 
 
 def next_due(inv):
@@ -113,8 +135,18 @@ def describe_terms(kind, terms):
                 terms["dropped_discount_pct"])
         return text
     if kind == "extension":
+        if terms.get("shifts_plan"):
+            return "the remaining payments moved %d days later" % terms["days"]
         return "a new due date of %s" % nice_date(terms["due_at"] + "T12:00")
     return kind
+
+
+def shift_plan(inv, days):
+    """More time on a plan moves its unpaid payments later. Payments already made stay where they were."""
+    plan = plan_of(inv)
+    plan["schedule"] = [dict(p, due=(date.fromisoformat(p["due"]) + timedelta(days=days)).isoformat())
+                        if r["owed"] > 0 else p for p, r in zip(plan["schedule"], plan_rows(inv))]
+    return json.dumps(plan)
 
 
 def resplit_plan(inv, params):

@@ -186,7 +186,7 @@ def _extension(offer, inv, m, history):
     if days > m["escalate_extension_up_to_days"]:
         return Verdict(DENY, ["%d days is far beyond anything the owner allows" % days])
     due = date.fromisoformat(str(inv["due_at"])[:10])
-    terms = {"due_at": (due + timedelta(days=days)).isoformat(), "days": days}
+    terms = {"due_at": (due + timedelta(days=days)).isoformat(), "days": days, "shifts_plan": bool(inv.get("plan"))}
     if days > m["max_extension_days"]:
         return Verdict(ESCALATE, ["%d days is longer than the %d-day extension the agent may give"
                                   % (days, m["max_extension_days"])], terms)

@@ -77,6 +77,120 @@ class Living(unittest.TestCase):
             s.LLM.client, s.LLM.create = keep_on, keep_create
         self.assertFalse([m for m in seen[-1] if "Rules check" in str(m["content"])])
 
+    # ---- missed plan payments ----
+
+    def plan_and_first_payment(self):
+        self.say("Can I split this into 3 payments?")  # $400 now, then Mon 23 Nov and Wed 23 Dec
+        self.pay()
+
+    def missed_reminders(self):
+        return [r for r in FAKE.reminders if "was due" in r["subject"]]
+
+    def test_a_missed_payment_is_chased_the_day_after(self):
+        self.plan_and_first_payment()
+        s.advance_clock(24 * 30)  # Mon 23 Nov: due today, not late yet
+        self.assertEqual(self.missed_reminders(), [])
+        s.advance_clock(24)
+        self.assertEqual(len(self.missed_reminders()), 1)
+        self.assertIn("$400", self.missed_reminders()[0]["note"])
+        self.assertIn("/i/%s" % self.token, self.missed_reminders()[0]["note"])
+        self.assertIn("Remind", owner_last())
+
+    def test_each_stage_reminds_only_once(self):
+        self.plan_and_first_payment()
+        s.advance_clock(24 * 31)
+        s.advance_clock(24)
+        self.assertEqual(len(self.missed_reminders()), 1)
+        s.advance_clock(24 * 6)
+        self.assertEqual(len(self.missed_reminders()), 2)
+        self.assertIn("keep your payment plan", self.missed_reminders()[1]["note"])
+
+    def test_paying_stops_the_chasing(self):
+        self.plan_and_first_payment()
+        s.advance_clock(24 * 31)
+        self.pay()
+        s.advance_clock(24 * 6)
+        self.assertEqual(len(self.missed_reminders()), 1)
+        self.assertEqual(s.living_state(self.token)["late_amount"], 0)
+
+    def test_the_final_date_alone_no_longer_decides_lateness(self):
+        self.plan_and_first_payment()
+        s.advance_clock(24 * 31)
+        self.assertEqual([r for r in FAKE.reminders if "overdue" in r["subject"].lower()], [])
+        st = s.living_state(self.token)
+        self.assertEqual((st["late_amount"], st["days_late"], st["late_since"], st["due_now"]), (400, 1, "Mon 23 Nov", 400))
+        self.assertTrue(st["plan"][1]["late"])
+        self.assertEqual(s.days_late(self.local()), 1)
+
+    def test_two_missed_payments_add_up(self):
+        self.plan_and_first_payment()
+        s.advance_clock(24 * 31)
+        s.advance_clock(24 * 30)
+        st = s.living_state(self.token)
+        self.assertEqual((st["late_amount"], st["due_now"]), (800, 800))
+
+    def test_owner_decides_whether_to_end_a_broken_plan(self):
+        self.plan_and_first_payment()
+        s.advance_clock(24 * 31)
+        s.advance_clock(24 * 13)  # 14 days after 23 Nov
+        p = s.q1("SELECT * FROM proposals WHERE dedupe LIKE 'endplan:%' AND status='pending'")
+        self.assertIsNotNone(p)
+        self.assertIn("full $800", p["summary"])
+        self.assertTrue(self.local()["plan"])
+        s.owner_message("approve #%d" % p["id"])
+        inv = self.local()
+        self.assertFalse(inv["plan"])
+        self.assertEqual(s.due_now(inv), 800)
+        self.assertEqual(self.paypal()["configuration"]["partial_payment"].get("minimum_amount_due"), None)
+        self.assertIn("has ended", s.living_state(self.token)["chat"][-1]["body"])
+        self.assertIn("has ended", FAKE.reminders[-1]["subject"])
+
+    def test_undoing_the_end_brings_the_plan_back(self):
+        self.plan_and_first_payment()
+        s.advance_clock(24 * 31)
+        s.advance_clock(24 * 13)
+        p = s.q1("SELECT * FROM proposals WHERE dedupe LIKE 'endplan:%' AND status='pending'")
+        s.owner_message("approve #%d" % p["id"])
+        s.owner_message("undo #%d" % p["id"])
+        self.assertTrue(self.local()["plan"])
+        self.assertIn("back in place", s.living_state(self.token)["chat"][-1]["body"])
+
+    def test_skipping_keeps_the_plan(self):
+        self.plan_and_first_payment()
+        s.advance_clock(24 * 31)
+        s.advance_clock(24 * 13)
+        p = s.q1("SELECT * FROM proposals WHERE dedupe LIKE 'endplan:%' AND status='pending'")
+        s.owner_message("skip #%d" % p["id"])
+        self.assertTrue(self.local()["plan"])
+        s.advance_clock(24)
+        self.assertEqual(len(s.q("SELECT id FROM proposals WHERE dedupe LIKE 'endplan:%'")), 1)
+
+    def test_more_time_moves_the_missed_payment_and_stops_the_chasing(self):
+        self.plan_and_first_payment()
+        s.advance_clock(24 * 31)
+        out = s.run_tool(self.local(), "propose_extension", {"days": 10})
+        self.assertEqual(out["result"], "applied")
+        st = s.living_state(self.token)
+        self.assertEqual(st["late_amount"], 0)
+        self.assertEqual(st["plan"][1]["due"], "Thu 03 Dec")
+        self.assertEqual(st["plan"][0]["owed"], 0)
+        before = len(self.missed_reminders())
+        s.advance_clock(24 * 6)
+        self.assertEqual(len(self.missed_reminders()), before)
+
+    def test_undoing_more_time_restores_the_dates(self):
+        self.plan_and_first_payment()
+        s.run_tool(self.local(), "propose_extension", {"days": 10})
+        self.assertEqual(s.living_state(self.token)["plan"][1]["due"], "Thu 03 Dec")
+        s.owner_message("undo")
+        self.assertEqual(s.living_state(self.token)["plan"][1]["due"], "Mon 23 Nov")
+
+    def test_paused_automation_stops_chasing(self):
+        self.plan_and_first_payment()
+        s.owner_message("pause missed plan payments")
+        s.advance_clock(24 * 31)
+        self.assertEqual(self.missed_reminders(), [])
+
     # ---- the page ----
 
     def test_state_for_a_valid_link_only(self):

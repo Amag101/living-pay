@@ -7,7 +7,9 @@ import re
 from living_pay.paypal_api import PayPalError
 from living_pay.config import LOCK
 from living_pay.store import ex, first_name, get_setting, iso, log, money, nice_date, now, post, q, q1, who
-from living_pay.invoices import cash, invoice_link, invoice_total, plan_rows
+from living_pay.invoices import (
+    cash, days_late, invoice_balance, invoice_link, invoice_total, missed_rows, plan_rows,
+)
 from living_pay.connectors import RetryLater, connector, paypal_mode
 from living_pay.llm import LLM
 
@@ -111,6 +113,8 @@ class OverdueReminders(Template):
         today = now().date()
         stages = sorted(p["stages"])
         for inv in q("SELECT * FROM invoices WHERE status='sent'"):
+            if plan_rows(inv):  # MissedPayments follows each date on a plan
+                continue
             due = datetime.fromisoformat(inv["due_at"])
             days = (today - due.date()).days
             hit = [s for s in stages if s <= days]
@@ -160,6 +164,8 @@ class OverdueReminders(Template):
         inv = q1("SELECT * FROM invoices WHERE id=?", (draft["invoice_id"],))
         if not inv or inv["status"] != "sent":
             return "%s is now %s" % (inv["number"], inv["status"]) if inv else "the invoice is gone"
+        if plan_rows(inv):
+            return "%s is now on a payment plan" % inv["number"]
         return None
 
 
@@ -277,6 +283,82 @@ class PaymentReminders(Template):
         return None
 
 
+class MissedPayments(Template):
+    """A plan is only worth agreeing if someone notices when it slips."""
+    key, name = "missed_payments", "Chase missed plan payments"
+    triggers = ("clock.tick", "clock.day")
+    default_trust = "auto_notice"  # the client agreed these dates, so a reminder needs no approval
+    default_params = {"stages": [1, 7], "end_plan_after": 14}
+    minutes_saved = 6
+
+    def describe(self, p):
+        return ("When a client on a plan misses a payment, remind them %s days late. At %d days late, ask you "
+                "whether to end the plan." % (" and ".join(str(s) for s in p["stages"]), p["end_plan_after"]))
+
+    def evaluate(self, auto, p, event):
+        drafts = []
+        for inv in q("SELECT * FROM invoices WHERE status='sent' AND plan IS NOT NULL AND plan!=''"):
+            missed = missed_rows(inv)
+            if not missed:
+                continue
+            days, c = days_late(inv), q1("SELECT * FROM contacts WHERE id=?", (inv["contact_id"],))
+            common = {"invoice_id": inv["id"], "due": missed[0]["due"], "contact_id": c["id"],
+                      "owed": cash(sum(r["owed"] for r in missed)),
+                      "since": nice_date(missed[0]["due"] + "T12:00")}
+            if days >= p["end_plan_after"]:
+                drafts.append(self._end_plan(inv, c, days, dict(common)))
+                continue
+            hit = [s for s in sorted(p["stages"]) if s <= days]
+            if hit:
+                drafts.append(self._remind(inv, c, days, hit[-1], len(hit) > 1, dict(common)))
+        return drafts
+
+    def _remind(self, inv, c, days, stage, firm, d):
+        tone = "firm" if firm else "friendly"
+        day_word = "%d day%s" % (days, "" if days == 1 else "s")
+        body = ("Hi %s,\n\nYour payment of %s for invoice %s was due on %s. %s\n\nYou can pay it, or ask for more "
+                "time, here: %s\n\nThank you,\n%s" % (
+                    first_name(c), d["owed"], inv["number"], d["since"],
+                    "Please pay it as soon as you can to keep your payment plan." if firm
+                    else "If it's already on its way, thank you.", invoice_link(inv), get_setting("business")))
+        d.update({"summary": "Remind %s about %s missed on %s" % (who(c), d["owed"], inv["number"]),
+                  "explanation": "It was due on %s, so it's %s late." % (d["since"], day_word),
+                  "dedupe": "missed:%d:%s:%d" % (inv["id"], d["due"], stage), "preview": body,
+                  "steps": [reminder_step(inv, c, "Your payment for %s was due %s" % (inv["number"], d["since"]),
+                                          body, tone + " missed payment reminder")]})
+        return d
+
+    def _end_plan(self, inv, c, days, d):
+        balance = cash(invoice_balance(inv))
+        today = now().replace(hour=12, minute=0).isoformat(timespec="minutes")
+        message = ("The payment plan on invoice %s has ended, because %s has been unpaid since %s. "
+                   "The full balance of %s is now due." % (inv["number"], d["owed"], d["since"], balance))
+        d.update({"summary": "End the payment plan on %s for %s, so the full %s is due now" % (inv["number"], who(c), balance),
+                  "explanation": "%s has been unpaid for %d days, since %s." % (d["owed"], days, d["since"]),
+                  "dedupe": "endplan:%d:%s" % (inv["id"], d["due"]),
+                  "policy_reasons": ["ending a plan changes what the client agreed"],
+                  "preview": message,
+                  "steps": [{"connector": "accounting", "op": "update_terms", "label": "End the plan on %s" % inv["number"],
+                             "params": {"invoice_id": inv["id"], "plan": "", "min_due": 0, "due_at": today}},
+                            {"connector": "invoice_chat", "op": "say", "label": "Tell the client on their invoice page",
+                             "params": {"invoice_id": inv["id"], "body": message,
+                                        "undo_body": "Good news: your payment plan on invoice %s is back in place."
+                                                     % inv["number"]}},
+                            reminder_step(inv, c, "Your payment plan for %s has ended" % inv["number"],
+                                          "Hi %s,\n\n%s\n\nYou can pay it, or ask about it, here: %s\n\n%s" % (
+                                              first_name(c), message, invoice_link(inv), get_setting("business")),
+                                          "plan ended notice")]})
+        return d
+
+    def precheck(self, draft):
+        inv = q1("SELECT * FROM invoices WHERE id=?", (draft["invoice_id"],))
+        if not inv or inv["status"] != "sent":
+            return "the invoice is no longer open"
+        if not [r for r in missed_rows(inv) if r["due"] == draft["due"]]:
+            return "that payment has been made or moved"
+        return None
+
+
 class NegotiateInvoices(Template):
     """Driven by the client chat on each invoice page, not by queued events."""
     key, name = "invoice_negotiation", "Negotiate on invoices"
@@ -295,7 +377,7 @@ class NegotiateInvoices(Template):
 
 
 TEMPLATES = {t.key: t for t in [SendInvoices(), OverdueReminders(), WeeklySummary(), NegotiateInvoices(),
-                                 PayoutOnPaid(), PaymentReminders()]}
+                                 PayoutOnPaid(), PaymentReminders(), MissedPayments()]}
 
 
 def summary_text():
@@ -307,7 +389,7 @@ def summary_text():
     collected = q1("SELECT COALESCE(SUM(amount),0) s, COUNT(*) n FROM invoices "
                    "WHERE paid_at>=? AND status='paid'", (week,))
     open_inv = q("SELECT * FROM invoices WHERE status='sent'")
-    overdue = [i for i in open_inv if i["due_at"] < iso(t)]
+    overdue = [i for i in open_inv if days_late(i) > 0]
     done = q("SELECT p.*, a.template FROM proposals p LEFT JOIN automations a ON a.id=p.automation_id "
              "WHERE p.status='executed' AND p.decided_at>=? AND p.kind='action'", (week,))
     minutes = sum(TEMPLATES[d["template"]].minutes_saved for d in done if d["template"] in TEMPLATES)
@@ -315,8 +397,8 @@ def summary_text():
              "Invoiced: %s across %d invoice%s" % (money(invoiced["s"]), invoiced["n"], "" if invoiced["n"] == 1 else "s"),
              "Collected: %s" % money(collected["s"]),
              "Outstanding: %s across %d invoice%s, %d overdue (%s)" % (
-                 money(sum(i["amount"] for i in open_inv)), len(open_inv), "" if len(open_inv) == 1 else "s",
-                 len(overdue), money(sum(i["amount"] for i in overdue)))]
+                 money(sum(invoice_balance(i) for i in open_inv)), len(open_inv), "" if len(open_inv) == 1 else "s",
+                 len(overdue), money(sum(invoice_balance(i) for i in overdue)))]
     if done:
         lines.append("I handled %d task%s for you, about %dh %02dm of admin." % (
             len(done), "" if len(done) == 1 else "s", minutes // 60, minutes % 60))

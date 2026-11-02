@@ -245,6 +245,7 @@ function renderStats() {
 function statusOf(i) {
   if (i.status === "paid") return `<span class="pill good">Paid</span>`;
   if (i.status === "void") return `<span class="pill">Cancelled</span>`;
+  if (i.late_amount > 0) return `<span class="pill bad">${money(i.late_amount)} missed, ${i.days_overdue} ${i.days_overdue === 1 ? "day" : "days"} late</span>`;
   if (i.days_overdue > 0) return `<span class="pill warn">${i.days_overdue} ${i.days_overdue === 1 ? "day" : "days"} overdue</span>`;
   if (i.amount_paid > 0) return `<span class="pill">${money(i.balance)} left</span>`;
   return `<span class="pill">Due ${esc(day(i.due_at))}</span>`;

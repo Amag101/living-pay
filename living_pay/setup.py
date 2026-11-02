@@ -66,8 +66,9 @@ def init_db():
     migrate()
     if not get_setting("now"):
         seed()
-    if not q1("SELECT id FROM automations WHERE template='payment_reminders'"):  # databases from before this existed
-        t = TEMPLATES["payment_reminders"]
+    for t in TEMPLATES.values():  # databases from before an automation existed
+        if q1("SELECT id FROM automations WHERE template=?", (t.key,)):
+            continue
         ex("INSERT INTO automations(template,params,trust,created_at) VALUES(?,?,?,?)",
            (t.key, json.dumps(t.default_params), t.default_trust, iso(now())))
     if paypal_mode() == "paypal":  # PayPal dates its invoices with today's date, so ours must match

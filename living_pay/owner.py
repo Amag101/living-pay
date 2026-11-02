@@ -31,6 +31,7 @@ HELP = ("You can type things like:\n"
 KEYWORDS = [
     ("payout_on_paid", ["subcontractor", "payout", "pay out", "contractor"]),
     ("invoice_negotiation", ["negotiat", "haggl", "counter-offer"]),
+    ("missed_payments", ["missed", "plan payment"]),
     ("overdue_reminders", ["overdue", "chase", "chasing", "unpaid", "late pay", "remind"]),
     ("weekly_summary", ["summary", "summaries", "report", "monday", "weekly"]),
     ("invoice_on_completion", ["invoice", "invoicing", "billing", "bill "]),

@@ -1,6 +1,5 @@
 """The owner's login, the page data and the web server."""
 
-from datetime import datetime
 import hashlib
 import hmac
 from http.cookies import SimpleCookie, CookieError
@@ -15,7 +14,9 @@ from urllib.parse import urlparse
 from living_pay.paypal_api import PayPalError
 from living_pay.config import APP_DIR, LOCK, PORT
 from living_pay.store import get_setting, iso, log, money, nice, nice_date, now, q, q1, set_setting
-from living_pay.invoices import describe_ask, describe_terms, invoice_balance, invoice_total, plan_rows
+from living_pay.invoices import (
+    days_late, describe_ask, describe_terms, invoice_balance, invoice_total, missed_rows, plan_rows,
+)
 from living_pay.connectors import connector, paypal_mode
 from living_pay.llm import LLM
 from living_pay.automations import TEMPLATES, TRUST_LABELS, automation_params
@@ -80,7 +81,8 @@ def state():
         t = now()
         invoices = q("SELECT i.*, c.name, c.company FROM invoices i JOIN contacts c ON c.id=i.contact_id ORDER BY i.id DESC")
         for i in invoices:
-            i["days_overdue"] = (t.date() - datetime.fromisoformat(i["due_at"]).date()).days if i["status"] == "sent" else 0
+            i["days_overdue"] = days_late(i)
+            i["late_amount"] = round(sum(r["owed"] for r in missed_rows(i)), 2)
             i["total"], i["balance"] = invoice_total(i), invoice_balance(i) if i["status"] == "sent" else 0
         return {
             "now": iso(t), "now_nice": nice(t), "demo": paypal_mode() != "paypal", "ask_paypal": paypal_ask_on(),
