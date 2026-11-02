@@ -421,6 +421,27 @@ class Living(unittest.TestCase):
         s.refund_invoice(self.inv["id"], 1200)
         self.assertEqual(s.q1("SELECT status FROM proposals WHERE kind='refund_request'")["status"], "cancelled")
 
+    # ---- Pay Later ----
+
+    def test_a_client_who_cannot_pay_hears_about_pay_later(self):
+        reply = self.say("I can't pay all of this right now")
+        self.assertIn("Pay Later", reply)
+        self.assertFalse(self.local()["plan"])  # no plan until they ask for one
+
+    def test_pay_later_is_noted_for_the_owner(self):
+        order = s.create_checkout(self.token, "now", "paylater")
+        s.fake_approve(self.token, order["order_id"])
+        s.capture_checkout(self.token, order["order_id"])
+        self.assertEqual(s.q1("SELECT method FROM payments ORDER BY id DESC")["method"], "PAY_LATER")
+        self.assertIn("**Pay Later:**", "\n".join(m["body"] for m in s.q("SELECT body FROM chat WHERE sender='bot'")))
+        rows = [r for r in s.ledger_state()["rows"] if r["kind"] == "Payment"]
+        self.assertEqual(rows[0]["what"], "Paid with PayPal Pay Later")
+
+    def test_other_payment_buttons_are_not_called_pay_later(self):
+        for funding in ("paypal", "card", "something-else"):
+            order = s.create_checkout(self.token, "now", funding)
+            self.assertNotEqual(s.q1("SELECT funding FROM checkout_orders WHERE id=?", (order["order_id"],))["funding"], "paylater")
+
     # ---- the page ----
 
     def test_state_for_a_valid_link_only(self):

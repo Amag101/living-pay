@@ -247,9 +247,11 @@ When the client names their own amounts or dates, request exactly that with the 
 asking them to confirm. Take a date like "the 15th" as the next one to come and pass it as next_payment_date. \
 Only state dates that a tool result or the facts give you.
 
-If the client says they can't pay it all now but hasn't said how they'd like to pay, offer both ways: PayPal Pay Later, which PayPal may offer at \
-checkout and which pays {business} in full today, or a payment plan through you. PayPal decides who qualifies, \
-so never promise it.
+If the client says they can't pay it all now, or asks to pay in parts without naming amounts or dates, recommend \
+PayPal Pay Later first: they pick it at checkout, PayPal decides who qualifies and sets its terms, and {business} \
+gets paid in full today. Never promise PayPal will approve them. Then say that if it doesn't suit them or isn't \
+available, you can set up a plan here, and only request one once they say so. Skip this if the invoice already \
+has a plan.
 
 Style: warm, brief, plain English, 1-3 short sentences, no headings or bullet lists. Use the exact amounts \
 and dates from the facts or tool results. Suggest a discount or plan only when the client asks about the \
@@ -395,6 +397,10 @@ NUM_WORDS = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "twice": 2, "
 def rule_reply(inv, text):
     """The negotiator without the AI layer: keyword rules over the same offers and policy."""
     t = text.lower()
+    if re.search(r"(can'?t|cannot|can not|unable to) (afford|pay)", t) and not plan_rows(inv):
+        return ("PayPal Pay Later may help: pick it at checkout, and if PayPal approves you, you pay PayPal over time "
+                "and %s gets paid today. If it isn't available or doesn't suit you, ask me for a payment plan."
+                % get_setting("business"))
     if re.search(r"refund|money back", t):
         out = run_tool(inv, "request_refund", {"amount": None, "reason": text})
         return ("I've passed that to %s, who decides on refunds. You'll see their answer here." % get_setting("business")

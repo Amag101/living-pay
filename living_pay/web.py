@@ -220,7 +220,7 @@ def ledger_state():
             rows.append({"id": "pay-%d" % pay["id"], "at": pay["at"], "kind": "Payment", "invoice": pay["number"],
                          "client": pay["company"] or pay["name"],
                          "what": {"PAYPAL": "Paid with PayPal", "PAYPAL_WEBHOOK": "Paid on PayPal",
-                                  "BANK_TRANSFER": "Marked paid by you"}.get(pay["method"], "Payment"),
+                                  "PAY_LATER": "Paid with PayPal Pay Later", "BANK_TRANSFER": "Marked paid by you"}.get(pay["method"], "Payment"),
                          "amount": pay["amount"], "status": "received", "verdict": None, "by": "client",
                          "why": "", "paypal": pay["external_id"] or pay["reference"], "undo": None})
         for po in q("SELECT p.*, s.name, i.number FROM payouts p JOIN subcontractors s ON s.id=p.sub_id "
@@ -291,7 +291,7 @@ class Handler(BaseHTTPRequestHandler):
             if action == ["chat"]:
                 return self.send_json(client_message(token, body.get("text")))
             if action == ["orders"]:
-                return self.send_json(create_checkout(token, body.get("which")))
+                return self.send_json(create_checkout(token, body.get("which"), body.get("funding")))
             if len(action) == 3 and action[0] == "orders" and action[2] == "capture":
                 return self.send_json(capture_checkout(token, action[1]))
             if len(action) == 3 and action[0] == "orders" and action[2] == "fake-approve":

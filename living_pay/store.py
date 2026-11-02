@@ -137,6 +137,7 @@ def who(contact):
 
 
 MIGRATIONS = {
+    "checkout_orders": [("funding", "TEXT")],
     "refunds": [("payment_ref", "TEXT")],
     "outbox": [("external_id", "TEXT"), ("note", "TEXT")],
     # amount is the invoiced price; the negotiated terms sit next to it.

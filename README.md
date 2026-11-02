@@ -15,7 +15,7 @@ Open the [live app](https://living-pay.onrender.com) and sign in with the judge 
 ## How it works
 
 1. **The owner sends an invoice:** who it's for, what it's for and how much. It goes out as a PayPal invoice with its own page.
-2. **The client talks to the invoice.** "Can I split this into 3 payments?" gets an answer straight away, and the invoice changes in PayPal.
+2. **The client talks to the invoice.** A client who can't pay it all is pointed to PayPal Pay Later first, because the business gets paid today. If that doesn't suit them, "$200 now and the rest on the 15th" gets an answer straight away, and the invoice changes in PayPal.
 3. **Bigger requests go to the owner,** who can approve, decline or counter with one message.
 4. **The client pays** with PayPal or a card, on the invoice page or on PayPal's own page.
    On a payment plan, the same link becomes their plan page, with progress, the schedule, email reminders and an Add to calendar button.

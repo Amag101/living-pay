@@ -24,7 +24,7 @@ def checkout_amount(inv, which):
     return amount
 
 
-def create_checkout(token, which):
+def create_checkout(token, which, funding=None):
     """Creates a PayPal order for the amount the server says is due. The browser never names a price."""
     with LOCK:
         inv = living(token)
@@ -36,8 +36,9 @@ def create_checkout(token, which):
                                          request_id="lp-order-%d-%s" % (inv["id"], secrets.token_hex(6)),
                                          brand_name=get_setting("business"))
     with LOCK:
-        ex("INSERT INTO checkout_orders(id,invoice_id,amount,status,at) VALUES(?,?,?,?,?)",
-           (order["id"], inv["id"], amount, order.get("status", "CREATED"), iso(now())))
+        ex("INSERT INTO checkout_orders(id,invoice_id,amount,status,at,funding) VALUES(?,?,?,?,?,?)",
+           (order["id"], inv["id"], amount, order.get("status", "CREATED"), iso(now()),
+            funding if funding in ("paylater", "paypal", "card") else None))
     return {"order_id": order["id"], "amount": amount}
 
 
@@ -172,13 +173,17 @@ def capture_checkout(token, order_id):
         row = q1("SELECT * FROM checkout_orders WHERE id=?", (order_id,))
         if not inv or not row or row["invoice_id"] != inv["id"]:
             raise KeyError("order")
-    captured = paypal_client().capture_order(order_id, request_id="li-capture-" + order_id)
+    captured = paypal_client().capture_order(order_id, request_id="lp-capture-" + order_id)
     cap_id, amount, status = paypal.capture_of(captured)
     with LOCK:
         ex("UPDATE checkout_orders SET status=? WHERE id=?", (captured.get("status"), order_id))
         if status != "COMPLETED":
             raise ValueError("PayPal didn't complete the payment (%s). You haven't been charged." % status)
         settle_payment(living(token), amount, "capture:%s" % cap_id, "PAYPAL", "client")
+        if row["funding"] == "paylater":
+            ex("UPDATE payments SET method='PAY_LATER' WHERE reference=?", ("capture:%s" % cap_id,))
+            post("bot", "**Pay Later:** the client used PayPal Pay Later for %s, so you have that money today and "
+                        "they pay PayPal over time." % money(amount))
         process_queue()
     return living_state(token)
 

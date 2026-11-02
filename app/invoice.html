@@ -69,6 +69,7 @@
   .msg { max-width: 84%; padding: 9px 12px; border-radius: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
   .msg.client { align-self: flex-end; background: var(--me); color: var(--me-ink); border-bottom-right-radius: 4px; }
   .msg.agent { align-self: flex-start; background: var(--them); border-bottom-left-radius: 4px; }
+  .paylater { background: var(--accent-soft); border-radius: 10px; padding: 10px 12px; font-size: 13.5px; margin-bottom: 10px; }
   .banner.late { background: var(--bad-soft); color: var(--bad); }
   .lateword { color: var(--bad); font-weight: 600; }
   .msg.typing { color: var(--muted); font-style: italic; }
@@ -206,6 +207,7 @@ function renderPay() {
     ${hasChoice ? `<div class="choice">
       <label><input type="radio" name="which" value="now" ${which === "now" ? "checked" : ""}>${S.late_amount > 0 ? "What's late" : "Next payment"} (${cash(S.due_now)})</label>
       <label><input type="radio" name="which" value="balance" ${which === "balance" ? "checked" : ""}>Whole balance (${cash(S.balance)})</label></div>` : ""}
+    <div class="paylater" id="paylater" hidden><strong>Can't pay it all today?</strong> Choose <strong>Pay Later</strong> below. If PayPal approves you, you pay PayPal over time and ${esc(S.business)} gets paid today. If that doesn't suit you, ask here about a payment plan.</div>
     <div id="paypal-buttons"></div>
     <div class="error" id="payerr" hidden></div>
     ${S.payer_url && S.mode === "paypal" ? `<div class="note">Prefer PayPal's own page? <a href="${esc(S.payer_url)}" target="_blank" rel="noopener">Open this invoice on PayPal</a>.${S.plan.length ? ` PayPal shows the whole balance of ${cash(S.balance)}; the next payment is the minimum due, ${cash(S.due_now)}.` : ""}</div>` : ""}`;
@@ -214,9 +216,12 @@ function renderPay() {
   const holder = $("#paypal-buttons");
   if (S.mode === "paypal") {
     loadPayPal().then(() => {
+      const offerable = !S.plan.length && !S.plan_ended && !S.paid && window.paypal.isFundingEligible
+        && window.paypal.isFundingEligible(window.paypal.FUNDING.PAYLATER);
+      if ($("#paylater")) $("#paylater").hidden = !offerable;
       window.paypal.Buttons({
         style: {layout: "vertical", shape: "rect", label: "pay"},
-        createOrder: async () => (await api("/orders", {which})).order_id,
+        createOrder: async (data) => (await api("/orders", {which, funding: data.paymentSource})).order_id,
         onApprove: async (data) => { S = await api(`/orders/${data.orderID}/capture`, {}); render(); },
         onError: (err) => payError(err && err.message ? err.message : "PayPal couldn't complete the payment."),
       }).render(holder);
@@ -232,7 +237,7 @@ function loadPayPal() {
   if (paypalLoaded) return Promise.resolve();
   return new Promise((ok, fail) => {
     const s = document.createElement("script");
-    s.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(S.paypal_client_id)}&currency=${encodeURIComponent(S.currency_code)}&intent=capture&enable-funding=paylater${S.paypal_env === "sandbox" ? "&buyer-country=US" : ""}`;
+    s.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(S.paypal_client_id)}&currency=${encodeURIComponent(S.currency_code)}&intent=capture&components=buttons,funding-eligibility&enable-funding=paylater${S.paypal_env === "sandbox" ? "&buyer-country=US" : ""}`;
     s.onload = () => { paypalLoaded = true; ok(); };
     s.onerror = fail;
     document.head.appendChild(s);
@@ -267,6 +272,7 @@ function renderChat() {
   $("#text").disabled = !open || busy; $("#sendbtn").disabled = !open || busy;
   // The suggestions stay available, minus any that no longer make sense for this invoice.
   const suggestions = [
+    !S.plan.length && !S.plan_ended && !S.paid && "I can't pay it all today",
     !S.plan.length && !S.plan_ended && "Can I split this into 3 payments?",
     S.discount_chip && !S.discount_pct && !S.paid && "Any discount if I pay today?",
     "Could I have two more weeks?",
