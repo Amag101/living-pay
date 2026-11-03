@@ -9,31 +9,36 @@
 <link rel="stylesheet" href="/style.css">
 
 <style>
-  .wrap { max-width: 980px; margin: 0 auto; padding: 28px 24px 48px; display: grid; gap: 28px; }
-  h1 { font-size: 26px; margin: 0 0 4px; }
-  h2 { font-size: 15px; font-weight: 600; margin: 0 0 10px; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 28px 24px 48px; display: grid; gap: 24px; }
+  h1 { font-size: 28px; font-weight: 700; letter-spacing: -.022em; line-height: 1.2; margin: 0 0 4px; }
+  h2 { font-size: 16px; font-weight: 700; margin: 0 0 10px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
   .auto { padding: 14px 16px; display: grid; gap: 6px; align-content: start; }
   .auto .name { font-weight: 600; }
   .auto .rule { color: var(--ink-2); font-size: 13px; }
-  .conn { display: flex; justify-content: space-between; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .conn { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
   .conn:last-child { border-bottom: none; }
+  .log-table td { font-size: 14px; }
   .log-table td:first-child { white-space: nowrap; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .log-table td:nth-child(3) { white-space: nowrap; }
   .what { font-weight: 550; }
   .why { color: var(--ink-2); font-size: 13px; margin-top: 2px; }
   .steps { margin: 6px 0 0; padding-left: 18px; color: var(--ink-2); font-size: 12.5px; }
   .filters { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
   .filters h2 { margin: 0; flex: 1; }
   .filters select { width: auto; }
-  .tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
-  .tabs button { font: inherit; font-weight: 550; border: 0; background: none; color: var(--ink-2); padding: 9px 14px; cursor: pointer; border-bottom: 2px solid transparent; border-radius: 0; margin-bottom: -1px; box-shadow: none; }
-  .tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+  .tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--line-2); }
+  .tabs button { font: inherit; font-size: 14px; font-weight: 550; min-height: 0; border: 0; background: none; color: var(--ink-2); padding: 10px 14px; cursor: pointer; border-bottom: 2px solid transparent; border-radius: 0; margin-bottom: -1px; box-shadow: none; }
+  .tabs button:hover { background: none; color: var(--ink); }
+  .tabs button[aria-selected="true"] { color: var(--accent); font-weight: 600; border-bottom-color: var(--accent); }
+  .tabs button:focus-visible { outline-offset: -2px; }
   .row { display: flex; flex-wrap: wrap; }
-  .banner { padding: 12px 16px; border-radius: var(--radius); }
-  .banner.ok { background: var(--accent-soft); color: var(--accent); }
+  .banner { padding: 12px 16px; border-radius: var(--radius-sm); }
+  .banner.ok { background: var(--accent-soft); color: var(--accent-hover); }
   .banner.err { background: var(--bad-soft); color: var(--bad); }
-  .switch { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); }
+  .switch { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg); }
   .switch input { width: auto; margin-top: 3px; }
+  button.small { min-height: 30px; padding: 2px 10px; font-size: 13px; }
   @media (max-width: 640px) {
     .wrap { padding: 16px; }
     .log-table thead { display: none; }

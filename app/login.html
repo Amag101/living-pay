@@ -8,10 +8,14 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;550;600;700&display=swap">
 <link rel="stylesheet" href="/style.css">
 <style>
-  main { max-width: 380px; margin: 12vh auto 0; padding: 0 16px; }
-  form { display: grid; gap: 12px; padding: 22px; }
+  body { background: linear-gradient(var(--ink), var(--ink)) no-repeat top / 100% calc(12vh + 150px), var(--bg); }
+  main { max-width: 400px; margin: 12vh auto 0; padding: 0 16px; }
+  .brand { font-size: 22px; color: var(--on-ink); }
+  main > p { --ink-2: var(--on-ink-2); font-size: 14px; }
+  form { display: grid; gap: 14px; padding: 24px; }
   label { display: grid; gap: 6px; font-weight: 600; }
-  #error { color: var(--bad); margin: 0; }
+  button.primary { min-height: 44px; font-size: 15px; }
+  #error { color: var(--bad); font-size: 14px; margin: 0; }
 </style>
 </head>
 <body>
