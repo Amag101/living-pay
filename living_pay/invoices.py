@@ -188,7 +188,8 @@ def fit_plan(inv, params):
     """A plan approved after a discount was agreed still has to add up to what's left."""
     plan = json.loads(params["plan"])
     pct = params["discount_pct"] if params.get("discount_pct") is not None else (inv.get("discount_pct") or 0)
-    left = policy.cents(round(inv["amount"] * (1 - pct / 100.0), 2)) - policy.cents(inv["amount_paid"] or 0)
+    # The schedule covers everything since base_paid, including payments it has already collected.
+    left = policy.cents(round(inv["amount"] * (1 - pct / 100.0), 2)) - policy.cents(plan["base_paid"])
     if left <= 0 or sum(policy.cents(p["amount"]) for p in plan["schedule"]) == left:
         return params
     each, extra = divmod(left, len(plan["schedule"]))

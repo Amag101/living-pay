@@ -174,6 +174,7 @@ class Living(unittest.TestCase):
         self.assertEqual(st["late_amount"], 0)
         self.assertEqual(st["plan"][1]["due"], "Thu 03 Dec")
         self.assertEqual(st["plan"][0]["owed"], 0)
+        self.assertEqual(sum(r["owed"] for r in s.plan_rows(self.local())), s.invoice_balance(self.local()))
         before = len(self.missed_reminders())
         s.advance_clock(24 * 6)
         self.assertEqual(len(self.missed_reminders()), before)
@@ -377,6 +378,12 @@ class Living(unittest.TestCase):
         self.assertEqual(list(FAKE.captures.values())[-1]["status"], "COMPLETED")
         self.assertIn("Refund request", owner_last())
         self.assertIn("Not what I expected", owner_last())
+
+    def test_a_refund_request_without_the_ai_keeps_the_amount_asked_for(self):
+        self.pay("balance")
+        s.rule_reply(self.local(), "I'd like a $50 refund")
+        p = s.q1("SELECT * FROM proposals WHERE kind='refund_request'")
+        self.assertEqual(json.loads(p["draft"])["amount"], 50)
 
     def test_chat_cannot_approve_a_refund_request(self):
         self.pay()

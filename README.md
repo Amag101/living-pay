@@ -97,7 +97,7 @@ Without a Claude key, or past the daily limit, simple keyword rules stand in for
 for t in tests/test_*.py; do python3 "$t" || exit 1; done
 ```
 
-219 tests run against `fake_paypal.py`, a stand-in that behaves the way the real sandbox was observed to behave. They need no network or accounts.
+220 tests run against `fake_paypal.py`, a stand-in that behaves the way the real sandbox was observed to behave. They need no network or accounts.
 
 ## Project layout
 

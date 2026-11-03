@@ -452,7 +452,9 @@ def rule_reply(inv, text):
                 "and %s gets paid today. If it isn't available or doesn't suit you, ask me for a payment plan."
                 % get_setting("business"))
     if re.search(r"refund|money back", t):
-        out = run_tool(inv, "request_refund", {"amount": None, "reason": text})
+        asked = re.search(r"[$£€₦]\s*(\d[\d,]*(?:\.\d+)?)", t)
+        out = run_tool(inv, "request_refund", {"amount": float(asked.group(1).replace(",", "")) if asked else None,
+                                               "reason": text})
         return ("I've passed that to %s, who decides on refunds. You'll see their answer here." % get_setting("business")
                 if out["result"] == "sent_to_owner" else "There's nothing I can pass on for a refund right now: %s"
                 % out.get("note", ""))
