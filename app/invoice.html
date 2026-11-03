@@ -37,9 +37,9 @@
   .bar span { display: block; height: 100%; background: var(--accent); border-radius: 999px; transition: width .4s ease; }
   .paidrow td { color: var(--good); }
   .remind { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 14px; padding: 12px 14px; background: var(--soft); border-radius: 10px; }
-  .check { display: flex; align-items: flex-start; gap: 8px; font-weight: 500; cursor: pointer; flex: 1 1 220px; }
-  .check input { margin-top: 3px; accent-color: var(--accent); }
-  .check .note { display: block; margin-top: 0; overflow-wrap: anywhere; }
+  .remind .check { display: flex; align-items: flex-start; gap: 8px; font-weight: 500; cursor: pointer; flex: 1 1 220px; }
+  .remind .check input { margin-top: 3px; accent-color: var(--accent); }
+  .remind .check .note { display: block; margin-top: 0; overflow-wrap: anywhere; }
   .remind .button { background: var(--surface); }
   details.tucked summary { cursor: pointer; font-weight: 550; color: var(--ink-2); padding: 4px 0; }
   details.tucked[open] summary { margin-bottom: 6px; }
@@ -73,7 +73,16 @@
   .banner.late { background: var(--bad-soft); color: var(--bad); }
   .lateword { color: var(--bad); font-weight: 600; }
   .msg.typing { color: var(--muted); font-style: italic; }
-  .msg.check { align-self: center; max-width: none; padding: 2px 10px; font-size: 12.5px; font-weight: 600; color: var(--muted); background: none; }
+  .msg.check { align-self: center; max-width: none; padding: 3px 12px; font-size: 12.5px; font-weight: 600; border-radius: 999px; white-space: normal; background: var(--surface-2); color: var(--muted); }
+  .msg.check.allow { background: var(--good-soft); color: var(--good); }
+  .msg.check.ask { background: var(--warn-soft); color: var(--warn); }
+  .msg.check.deny { background: var(--bad-soft); color: var(--bad); }
+  .brandbar { display: flex; align-items: center; gap: 8px; font-weight: 700; margin-bottom: 14px; }
+  .brandbar .env { margin-left: auto; font-size: 12.5px; font-weight: 500; color: var(--muted); text-align: right; }
+  .plannote { margin: 8px 0 0; font-size: 13px; color: var(--muted); }
+  .asklink { display: none; margin-top: 10px; font-size: 14px; }
+  #paypal-buttons { min-height: 45px; }
+  @media (max-width: 820px) { input, select, form.send input { font-size: 16px; } .chips button { min-height: 40px; } .asklink { display: block; } }
   .chips { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 18px 10px; }
   .chips button { font-size: 13px; padding: 5px 10px; border-radius: 999px; }
   form.send { display: flex; gap: 8px; padding: 12px 18px 16px; border-top: 1px solid var(--line); }
@@ -87,6 +96,7 @@
 </head>
 <body>
 <div class="wrap">
+  <div class="brandbar"><img src="/logo.svg" alt="" width="24" height="24">Living Pay<span class="env" id="envnote"></span></div>
   <header>
     <h1 id="biz">Loading your invoice…</h1>
     <span class="sub" id="number"></span>
@@ -141,7 +151,8 @@ function render() {
   document.title = `${S.number} from ${S.business}`;
   $("#biz").textContent = S.business;
   $("#number").textContent = `Invoice ${S.number} · issued ${S.issued}`;
-  const st = S.status === "paid" ? `<span class="pill paid">Paid</span>` : S.status === "sent" ? `<span class="pill">Due ${esc(S.due_date)}</span>` : `<span class="pill void">Cancelled</span>`;
+  const st = S.status === "paid" ? `<span class="pill paid">Paid</span>` : S.status === "refunded" ? `<span class="pill void">Refunded</span>`
+    : S.status === "sent" ? `<span class="pill">${S.plan.length ? "Final payment" : "Due"} ${esc(S.due_date)}</span>` : `<span class="pill void">Cancelled</span>`;
   $("#status").innerHTML = st;
   $("#grid").hidden = false;
 
@@ -149,13 +160,13 @@ function render() {
   const rows = `
     <div class="row"><span class="k">For</span><span>${esc(S.client)}</span></div>
     <div class="row"><span class="k">Work</span><span>${esc(S.title)}</span></div>
-    <div class="row"><span class="k">Price</span><span class="num">${cash(S.amount)}</span></div>
+    ${disc ? `<div class="row"><span class="k">Price</span><span class="num">${cash(S.amount)}</span></div>` : ""}
     ${disc ? `<div class="row"><span class="k">Discount (${+S.discount_pct.toFixed(1)}%)</span><span class="num">−${cash(disc)}</span></div>` : ""}
-    <div class="row"><span class="k">Total</span><span class="num">${cash(S.total)}</span></div>
+    ${disc || S.paid ? `<div class="row"><span class="k">Total</span><span class="num">${cash(S.total)}</span></div>` : ""}
     ${S.refunded ? `<div class="row"><span class="k">Refunded to you</span><span class="num">${cash(S.refunded)}</span></div>` : ""}
     ${S.paid ? `<div class="row"><span class="k">Paid so far</span><span class="num">${cash(S.paid)}</span></div>` : ""}
     <div class="row big"><span>Balance</span><span class="num">${cash(S.balance)}</span></div>
-    <div class="row"><span class="k">Due date</span><span>${esc(S.due_date)}</span></div>`;
+    `;
   // Once a plan is under way the same link becomes the client's plan page: progress first, details tucked away.
   const keepOpen = $("#lines details") && $("#lines details").open;
   $("#invhead").hidden = S.plan_view;
@@ -165,6 +176,7 @@ function render() {
 
   renderPay();
   renderChat();
+  $("#envnote").textContent = S.mode === "paypal" && S.paypal_env !== "sandbox" ? "" : "Sandbox: no real money moves";
   $("#foot").textContent = "Powered by Living Pay. " + (S.mode === "fake" ? "Demo mode: payments go to a simulated PayPal sandbox." :
     S.mode === "offline" ? "Demo mode: PayPal isn't connected, so payments are simulated." :
     S.paypal_env === "sandbox" ? "PayPal sandbox: no real money moves." : "");
@@ -173,7 +185,8 @@ function render() {
 function planTable(title, style) {
   return `<h2 style="${style || ""}">${esc(title)}</h2>
     <table class="plan">${S.plan.map((p) => `<tr class="${p.owed <= 0 ? "paidrow" : ""}"><td>${p.owed <= 0 ? "✓ " : ""}${esc(p.due)}</td><td class="num">${cash(p.amount)}</td>
-      <td class="num ${p.late ? "lateword" : ""}">${p.owed <= 0 ? "Paid" : p.late ? "Late" : p.owed < p.amount ? cash(p.owed) + " left" : ""}</td></tr>`).join("")}</table>`;
+      <td class="num ${p.late ? "lateword" : ""}">${p.owed <= 0 ? "Paid" : p.late ? "Late" : p.owed < p.amount ? cash(p.owed) + " left" : ""}</td></tr>`).join("")}</table>
+    ${S.status === "sent" ? `<p class="plannote">Nothing is charged automatically. Come back to this link to pay each one.</p>` : ""}`;
 }
 
 function planView() {
@@ -200,25 +213,31 @@ function renderPay() {
   const hasChoice = S.due_now < S.balance - 0.005;
   if (!hasChoice) which = "now";
   const amount = which === "balance" ? S.balance : S.due_now;
-  const waiting = S.waiting_for_owner ? `<div class="banner">Waiting for ${esc(S.business)} to answer your request for ${esc(S.waiting_for_owner)}.</div>` : "";
+  // Only rebuild the payment buttons when something they show changes: not on each chat reply, and never mid-payment.
+  const key = [S.status, S.mode, amount, which, hasChoice, S.late_amount, S.waiting_for_owner, S.plan.length, S.paid].join("|");
+  if (key === renderPay.key && $("#paypal-buttons") && $("#paypal-buttons").childElementCount) return;
+  renderPay.key = key;
+  const waiting = S.waiting_for_owner ? `<div class="banner">Waiting for ${esc(S.business)} to answer your request for ${esc(S.waiting_for_owner)}. You won't get an email, so check this page again. You can still pay.</div>` : "";
   const late = S.late_amount > 0 ? `<div class="banner late">${cash(S.late_amount)} was due on ${esc(S.late_since)}. Please pay it below, or ask here for more time.</div>` : "";
   box.innerHTML = `${late}${waiting}
     <div class="due"><span>${hasChoice && which === "now" ? (S.late_amount > 0 ? "Due now" : S.due_today ? "Due today" : `Next payment, due ${esc(S.next_due)}`) : "Pay"}</span><strong class="num">${cash(amount)}</strong></div>
     ${hasChoice ? `<div class="choice">
       <label><input type="radio" name="which" value="now" ${which === "now" ? "checked" : ""}>${S.late_amount > 0 ? "What's late" : "Next payment"} (${cash(S.due_now)})</label>
       <label><input type="radio" name="which" value="balance" ${which === "balance" ? "checked" : ""}>Whole balance (${cash(S.balance)})</label></div>` : ""}
-    <div class="paylater" id="paylater" hidden><strong>Can't pay it all today?</strong> Choose <strong>Pay Later</strong> below. If PayPal approves you, you pay PayPal over time and ${esc(S.business)} gets paid today. If that doesn't suit you, ask here about a payment plan.</div>
+    ${!S.plan.length && !S.plan_ended && !S.paid ? `<div class="paylater"><strong>Can't pay it all today?</strong> <span id="paylater" hidden>Choose <strong>Pay Later</strong> below. If PayPal approves you, you pay PayPal over time and ${esc(S.business)} gets the full amount up front. </span>You can also ask the assistant on this page for a plan or more time.</div>` : ""}
     <div id="paypal-buttons"></div>
     <div class="error" id="payerr" hidden></div>
     ${S.payer_url && S.mode === "paypal" ? `<div class="note">Prefer PayPal's own page? <a href="${esc(S.payer_url)}" target="_blank" rel="noopener">Open this invoice on PayPal</a>.${S.plan.length ? ` PayPal shows the whole balance of ${cash(S.balance)}; the next payment is the minimum due, ${cash(S.due_now)}.` : ""}</div>` : ""}`;
   box.querySelectorAll("input[name=which]").forEach((r) => r.addEventListener("change", () => { which = r.value; renderPay(); }));
 
+  box.insertAdjacentHTML("beforeend", `<a class="asklink" href="#text">Questions? Ask this invoice</a>`);
   const holder = $("#paypal-buttons");
   if (S.mode === "paypal") {
+    holder.innerHTML = `<div class="note">Loading PayPal…</div>`;
     loadPayPal().then(() => {
-      const offerable = !S.plan.length && !S.plan_ended && !S.paid && window.paypal.isFundingEligible
-        && window.paypal.isFundingEligible(window.paypal.FUNDING.PAYLATER);
+      const offerable = window.paypal.isFundingEligible && window.paypal.isFundingEligible(window.paypal.FUNDING.PAYLATER);
       if ($("#paylater")) $("#paylater").hidden = !offerable;
+      holder.innerHTML = "";
       window.paypal.Buttons({
         style: {layout: "vertical", shape: "rect", label: "pay"},
         createOrder: async (data) => (await api("/orders", {which, funding: data.paymentSource})).order_id,
@@ -265,8 +284,8 @@ function renderChat() {
   if (S.chat.length === lastChat && !busy) return;
   lastChat = S.chat.length;
   const m = $("#msgs");
-  m.innerHTML = S.chat.length ? S.chat.map((c) => `<div class="msg ${c.role === "agent" ? "agent" : c.role}">${esc(c.body)}</div>`).join("")
-    : `<div class="msg agent">Hi! I'm the assistant on this invoice from ${esc(S.business)}. I can explain it, set up a payment plan or move the due date. What would help?</div>`;
+  m.innerHTML = S.chat.length ? S.chat.map((c) => `<div class="msg ${c.role === "agent" ? "agent" : c.role} ${c.role === "check" ? (/not allowed/.test(c.body) ? "deny" : /allowed/.test(c.body) ? "allow" : "ask") : ""}">${esc(c.body)}</div>`).join("")
+    : `<div class="msg agent">Hi! I'm the AI assistant on this invoice from ${esc(S.business)}. I can explain it, set up a payment plan or move the due date. What would help?</div>`;
   if (busy) m.insertAdjacentHTML("beforeend", `<div class="msg agent typing">Thinking…</div>`);
   const open = S.status === "sent" || S.status === "paid";
   $("#text").disabled = !open || busy; $("#sendbtn").disabled = !open || busy;
@@ -288,10 +307,12 @@ async function send(text) {
   if (!text || busy) return;
   busy = true;
   S.chat = S.chat.concat([{role: "client", body: text}]);
+  $("#text").value = "";
   lastChat = -1; renderChat();
-  try { S = await api("/chat", {text}); $("#text").value = ""; }
+  try { S = await api("/chat", {text}); }
   catch (e) { S.chat = S.chat.concat([{role: "agent", body: e.message}]); }
   busy = false; lastChat = -1; render();
+  $("#text").focus();
 }
 
 $("#plan").addEventListener("change", async (e) => {

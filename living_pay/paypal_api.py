@@ -8,6 +8,7 @@ PayPal server. Every write takes a request id, sent as PayPal-Request-Id, so a
 retried call never creates a second invoice, order or payout.
 """
 import base64
+import http.client
 import json
 import os
 import threading
@@ -87,11 +88,11 @@ class Client:
                 name = body.get("name") or body.get("error") or str(e.code)
                 message = body.get("message") or body.get("error_description") or e.reason
                 raise PayPalError(e.code, name, message, body.get("debug_id"), body.get("details"))
-            except urllib.error.URLError as e:
+            except (OSError, http.client.HTTPException) as e:  # includes timeouts and dropped connections
                 if attempt == 1:
                     time.sleep(1)
                     continue
-                raise PayPalError(0, "NETWORK", str(e.reason))
+                raise PayPalError(0, "NETWORK", str(getattr(e, "reason", e)))
 
     def token(self, force=False):
         with self._lock:
@@ -176,9 +177,6 @@ class Client:
         if brand_name:  # the name in PayPal's checkout window
             order["application_context"] = {"brand_name": brand_name[:127]}
         return self.call("POST", "/v2/checkout/orders", order, request_id, representation=True)
-
-    def get_order(self, order_id):
-        return self.call("GET", "/v2/checkout/orders/%s" % order_id)
 
     def capture_order(self, order_id, request_id=None):
         return self.call("POST", "/v2/checkout/orders/%s/capture" % order_id, {}, request_id,

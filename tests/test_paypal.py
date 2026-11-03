@@ -220,7 +220,7 @@ class PayPalInvoicing(unittest.TestCase):
         payer("/__fake/invoices/%s/pay" % pp["id"])
         self.assertEqual(deliver(tamper=('"event_version": "1.0"', '"event_version": "9.9"')), 401)
         self.assertEqual(s.q1("SELECT status FROM invoices WHERE id=?", (inv["id"],))["status"], "sent")
-        self.assertEqual(s.q1("SELECT event FROM audit ORDER BY id DESC")["event"], "webhook_rejected")
+        self.assertEqual(s.q("SELECT id FROM webhook_events WHERE verified=0"), [])  # nothing forged gets stored
         self.assertEqual(s.paypal_webhook({}, "not json"), 400)
 
     def test_recorded_payment_is_idempotent_and_not_recounted_by_polling(self):

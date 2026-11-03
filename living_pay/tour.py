@@ -1,4 +1,5 @@
-"""The guided tour for judges: a fresh copy of the app, a sample invoice and a way to show a missed payment."""
+"""The guided tour for judges: a fresh start, a sample invoice and a way to show a missed payment."""
+import glob
 import json
 import os
 import sqlite3
@@ -12,9 +13,9 @@ from living_pay.paypal_api import PayPalError
 from living_pay.connectors import connector, paypal_client
 from living_pay.automations import enqueue, process_queue
 from living_pay.owner import new_invoice
-from living_pay.setup import reset
+from living_pay.database import reset
 
-JUDGE_INVOICES_PER_DAY = 30
+JUDGE_INVOICES_PER_DAY = 200
 JUDGE_CHATS = (60, 600)  # owner messages allowed, per this many seconds
 _invoice_times, _chat_times = [], []
 
@@ -56,9 +57,13 @@ def tour_state():
 
 def keep_a_copy():
     """Starting again never loses anything: the old database stays on disk, next to the live one."""
-    copy = sqlite3.connect("%s-before-tour-%d" % (DB_PATH, time.time()))
+    copy = sqlite3.connect("%s-before-tour-%020d" % (DB_PATH, time.time_ns()))
     db().backup(copy)
     copy.close()
+    # Keeps the first copy, which holds anything from before the tour, and the latest few.
+    copies = sorted(glob.glob(glob.escape(DB_PATH) + "-before-tour-*"))
+    for old in copies[1:-5]:
+        os.remove(old)
 
 
 def earlier_approvals(amount):
@@ -92,7 +97,7 @@ def close_open_invoices():
 
 
 def start_tour():
-    """A fresh app for each judge, with full access: everything they can see or change is the demo's own."""
+    """A fresh start for the shared demo, with full access. Two judges at once would share it, and this resets it for both."""
     judge_may_invoice()
     with LOCK:
         close_open_invoices()

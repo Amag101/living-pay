@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Settings</title>
+<title>Settings · Living Pay</title>
 <link rel="icon" href="/logo.svg">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;550;600;700&display=swap">
 <link rel="stylesheet" href="/style.css">
@@ -28,6 +28,7 @@
   .tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
   .tabs button { font: inherit; font-weight: 550; border: 0; background: none; color: var(--ink-2); padding: 9px 14px; cursor: pointer; border-bottom: 2px solid transparent; border-radius: 0; margin-bottom: -1px; box-shadow: none; }
   .tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+  .row { display: flex; flex-wrap: wrap; }
   .banner { padding: 12px 16px; border-radius: var(--radius); }
   .banner.ok { background: var(--accent-soft); color: var(--accent); }
   .banner.err { background: var(--bad-soft); color: var(--bad); }
@@ -57,14 +58,14 @@
     <div class="muted">What your assistant may do, and everything it has done. <span id="now" hidden></span></div>
   </div>
   <div class="tabs" id="tabs" role="tablist" aria-label="Settings">
-    <button role="tab" data-tab="business" aria-selected="true">Business</button>
-    <button role="tab" data-tab="rules" aria-selected="false">Rules</button>
+    <button role="tab" data-tab="rules" aria-selected="true">Rules</button>
+    <button role="tab" data-tab="business" aria-selected="false">Business</button>
     <button role="tab" data-tab="automations" aria-selected="false">Automations</button>
     <button role="tab" data-tab="connections" aria-selected="false">Connections</button>
     <button role="tab" data-tab="activity" aria-selected="false">Activity</button>
   </div>
   <div id="banner" hidden></div>
-  <section data-panel="business">
+  <section data-panel="business" hidden>
     <h2>Your business</h2>
     <div class="card" style="padding:14px 18px;display:grid;gap:12px">
       <form id="bizform" class="row" style="gap:8px;align-items:center">
@@ -76,7 +77,7 @@
       <div class="row" id="signout" hidden><button id="logout">Sign out</button></div>
     </div>
   </section>
-  <section data-panel="rules" hidden>
+  <section data-panel="rules">
     <h2>What your assistant may agree to</h2>
     <div class="card" style="padding:14px 18px">
       <ul id="rules" style="margin:0;padding-left:18px;display:grid;gap:4px"></ul>
@@ -125,7 +126,7 @@ const EVENT = {
   proposed: ["Proposed", ""], approved: ["Approved", "good"], executed: ["Done", "good"], skipped: ["Skipped", ""],
   cancelled: ["Withdrawn", ""], undone: ["Undone", "warn"], failed: ["Failed", "bad"], observed: ["Watched", ""],
   trust_changed: ["Trust", "warn"], automation_saved: ["Rule saved", "good"], paused: ["Paused", "warn"], resumed: ["Resumed", "good"],
-  connected: ["Connected", "good"], disconnected: ["Disconnected", "warn"], connection_lost: ["Access lost", "bad"], setting_changed: ["Setting", "warn"], paypal_question: ["PayPal", ""], refund_refund: ["Refund", "warn"], refund_requested: ["Refund request", "warn"], refund_reversal: ["Reversed", "bad"], tour_started: ["Tour", ""], tour_late: ["Tour", ""],  payment_received: ["Payment", "good"], invoice_paid: ["Paid", "good"], reminders_changed: ["Reminders", ""],
+  connected: ["Connected", "good"], disconnected: ["Disconnected", "warn"], connection_lost: ["Access lost", "bad"], setting_changed: ["Setting", "warn"], paypal_question: ["PayPal", ""], rules_changed: ["Rules changed", "warn"], rules_narrowed: ["Rules narrowed", "warn"], countered: ["Countered", ""], client_question: ["Question", ""], invoice_cancelled: ["Cancelled", ""], undo_deferred: ["Undo waiting", ""], refund_refund: ["Refund", "warn"], refund_requested: ["Refund request", "warn"], refund_reversal: ["Reversed", "bad"], tour_started: ["Tour", ""], tour_late: ["Tour", ""],  payment_received: ["Payment", "good"], invoice_paid: ["Paid", "good"], reminders_changed: ["Reminders", ""],
 };
 let last = "";
 

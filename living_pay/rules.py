@@ -5,7 +5,6 @@ import re
 
 from living_pay import policy
 from living_pay.store import ex, get_setting, iso, log, now, post, q, q1, set_setting
-from living_pay.invoices import describe_terms
 from living_pay.llm import LLM, nullable_enum
 from living_pay.negotiator import mandate
 from living_pay.automations import offer_hooks
@@ -135,10 +134,10 @@ def propose_mandate(text):
         ex("UPDATE proposals SET status='skipped', decided_at=? WHERE id=?", (iso(now()), p["id"]))
     pid = ex("INSERT INTO proposals(kind,summary,explanation,draft,reasons,status,created_at) "
              "VALUES('mandate',?,?,?,?,?,?)",
-             ("Change the invoice agent's rules", text[:500], json.dumps({"rules": new}), "[]", "pending",
+             ("Change the assistant's rules", text[:500], json.dumps({"rules": new}), "[]", "pending",
               iso(now())))
-    log("proposed", "Change the invoice agent's rules", pid, data={"from": current, "to": new})
-    post("bot", "Here's the change I understood for the invoice agent:\n%s\nShall I save it?" % "\n".join(
+    log("proposed", "Change the assistant's rules", pid, data={"from": current, "to": new})
+    post("bot", "Here's the change I understood for the assistant:\n%s\nShall I save it?" % "\n".join(
         "- ~~%s~~ → **%s**" % (b, a) for b, a in diff), pid,
         [{"label": "Yes", "send": "approve #%d" % pid}, {"label": "No", "send": "skip #%d" % pid}])
     return None
@@ -153,8 +152,8 @@ def apply_mandate(p):
         grown.append(dict(draft["growth"], at=iso(now()), active=True, proposal_id=p["id"]))
         set_setting("mandate_growth", json.dumps(grown))
     ex("UPDATE proposals SET status='executed', decided_at=? WHERE id=?", (iso(now()), p["id"]))
-    log("rules_changed", "Invoice agent rules updated", p["id"], actor="owner", data={"rules": rules})
-    return "Saved. The invoice agent now follows these rules:\n" + "\n".join("- " + l for l in rules_lines(mandate()))
+    log("rules_changed", "Assistant's rules updated", p["id"], actor="owner", data={"rules": rules})
+    return "Saved. Your assistant now follows these rules:\n" + "\n".join("- " + l for l in rules_lines(mandate()))
 
 
 # ---- The agent earns wider rules -------------------------------------------
@@ -223,8 +222,7 @@ def maybe_grow(offer_id):
         return
     for p in q("SELECT * FROM proposals WHERE status='pending' AND kind='mandate'"):
         ex("UPDATE proposals SET status='skipped', decided_at=? WHERE id=?", (iso(now()), p["id"]))
-    summary = "Let the invoice agent agree to %s itself" % GROWTH_LABELS[key]
-    asks = "; ".join(describe_terms(o["kind"], json.loads(o["terms"])).split(", so")[0] for o in streak[-GROWTH_STREAK:])
+    summary = "Let the assistant agree to %s itself" % GROWTH_LABELS[key]
     pid = ex("INSERT INTO proposals(kind,summary,explanation,draft,reasons,status,created_at) "
              "VALUES('mandate',?,?,?,?,?,?)",
              (summary, "You approved the last %d requests for %s." % (GROWTH_STREAK, GROWTH_LABELS[key]),
@@ -232,9 +230,9 @@ def maybe_grow(offer_id):
                                                    "after": {k: v[1] for k, v in changed.items()}}}),
               "[]", "pending", iso(now())))
     log("proposed", summary, pid, data={"from": current, "to": new, "approved": [o["id"] for o in streak]})
-    post("bot", "You've approved the last %d requests for **%s** (%s). Shall I agree to requests like these myself "
+    post("bot", "You've approved the last %d requests for **%s**. Shall I agree to requests like these myself "
                 "from now on?\n%s\nIf you undo one I agree to, I'll go back to asking." % (
-                    GROWTH_STREAK, GROWTH_LABELS[key], asks, "\n".join("- ~~%s~~ → **%s**" % (b, a) for b, a in diff)),
+                    GROWTH_STREAK, GROWTH_LABELS[key], "\n".join("- ~~%s~~ → **%s**" % (b, a) for b, a in diff)),
          pid, [{"label": "Yes", "send": "approve #%d" % pid}, {"label": "No", "send": "skip #%d" % pid}])
 
 

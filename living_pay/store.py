@@ -123,7 +123,8 @@ def nice_date(dt):
 
 
 def money(x):
-    return "%s%s" % (get_setting("currency", "$"), format(round(x), ","))
+    x = round(float(x), 2)
+    return "%s%s" % (get_setting("currency", "$"), format(int(x), ",") if x == int(x) else format(x, ",.2f"))
 
 
 def first_name(contact):
@@ -155,11 +156,6 @@ def migrate():
         for name, decl in cols:
             if name not in have:
                 db().execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, name, decl))
-    # Features that were removed, in databases from before.
-    db().execute("DROP TABLE IF EXISTS cal_events")
-    db().execute("DROP TABLE IF EXISTS connections")
-    db().execute("DELETE FROM automations WHERE template='appointment_reminders'")
-    db().execute("UPDATE automations SET template='send_invoices' WHERE template='invoice_on_completion'")
     db().commit()
 
 

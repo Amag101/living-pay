@@ -21,15 +21,18 @@ class _LLM:
         self.spent_on, self.calls = None, 0
         self.status = "off (pip install anthropic to enable)"
         if os.environ.get("LIVING_LLM", "on") == "off":
-            self.status = "off (LIVING_LLM=off)"
+            self.status = "off"
             return
         try:
             import anthropic
         except ImportError:
             return
+        if not os.environ.get("ANTHROPIC_API_KEY") and not os.environ.get("ANTHROPIC_AUTH_TOKEN"):
+            self.status = "off (no ANTHROPIC_API_KEY)"
+            return
         try:
             self.anthropic = anthropic
-            self.client = anthropic.Anthropic()
+            self.client = anthropic.Anthropic(timeout=45.0, max_retries=1)  # a client is waiting on the page
             self.status = "on (%s)" % LLM_MODEL
         except Exception as e:
             self.client, self.status = None, "off (%s)" % e
@@ -53,11 +56,7 @@ class _LLM:
                       messages=[{"role": "user", "content": user}],
                       output_config={"effort": "low", "format": {"type": "json_schema", "schema": schema}})
         try:
-            try:
-                resp = self.client.beta.messages.create(
-                    betas=["server-side-fallback-2026-07-01"], fallbacks="default", **kwargs)
-            except TypeError:  # older SDK without the fallbacks parameter
-                resp = self.client.messages.create(**kwargs)
+            resp = self.client.beta.messages.create(betas=["server-side-fallback-2026-07-01"], fallbacks="default", **kwargs)
         except (self.anthropic.AuthenticationError, self.anthropic.PermissionDeniedError) as e:
             self.client, self.status = None, "off (%s)" % e.__class__.__name__
             return None
@@ -78,11 +77,7 @@ class _LLM:
             return None
         kwargs = dict(model=LLM_MODEL, output_config={"effort": "low"}, **kwargs)
         try:
-            try:
-                return self.client.beta.messages.create(
-                    betas=["server-side-fallback-2026-07-01"], fallbacks="default", **kwargs)
-            except TypeError:  # older SDK without the fallbacks parameter
-                return self.client.messages.create(**kwargs)
+            return self.client.beta.messages.create(betas=["server-side-fallback-2026-07-01"], fallbacks="default", **kwargs)
         except (self.anthropic.AuthenticationError, self.anthropic.PermissionDeniedError) as e:
             self.client, self.status = None, "off (%s)" % e.__class__.__name__
         except Exception as e:

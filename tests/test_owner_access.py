@@ -8,6 +8,7 @@ import sqlite3
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -71,7 +72,7 @@ class Login(unittest.TestCase):
     def test_owner_data_needs_a_login(self):
         for path in ("/api/state", "/api/audit", "/api/ledger"):
             self.assertEqual(self.hit(path)[0], 401, path)
-        for path in ("/api/chat", "/api/reset", "/api/settings/business", "/api/sandbox/tick", "/logout"):
+        for path in ("/api/chat", "/api/reset", "/api/settings/business", "/api/demo/clock", "/logout"):
             self.assertEqual(self.hit(path, {})[0], 401, path)
 
     def test_owner_pages_send_you_to_login(self):
@@ -202,7 +203,7 @@ class JudgeLogin(Login):
         folder = os.path.dirname(s.DB_PATH)
         copies = [f for f in os.listdir(folder) if "before-tour" in f]
         self.assertTrue(copies)
-        keep = sqlite3.connect(os.path.join(folder, sorted(copies)[0]))
+        keep = sqlite3.connect(os.path.join(folder, sorted(copies)[-1]))  # the newest is the one just made
         self.assertTrue(keep.execute("SELECT id FROM invoices WHERE title='Mine'").fetchall())
         keep.close()
         self.hit("/api/tour/start", {}, cookie)
@@ -273,6 +274,65 @@ class JudgeLogin(Login):
         self.assertEqual(s.q1("SELECT plan FROM invoices WHERE number='INV-1001'")["plan"], None)
 
 
+class Hardening(unittest.TestCase):
+    def setUp(self):
+        s.reset()
+        s._webhook_rejections.clear()
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), s.Handler)
+        self.base = "http://127.0.0.1:%d" % self.httpd.server_port
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def tearDown(self):
+        self.httpd.shutdown()
+
+    def post(self, path, data):
+        try:
+            r = OPENER.open(urllib.request.Request(self.base + path, data=data))
+        except urllib.error.HTTPError as e:
+            r = e
+        return (r.status if hasattr(r, "status") else r.code), r.headers
+
+    def test_forged_webhooks_store_nothing(self):
+        keep = s.paypal_client
+        s.paypal_client = lambda: NS(verify_webhook=lambda *a: False)
+        try:
+            for i in range(3):
+                code, _ = self.post("/webhooks/paypal", json.dumps({"id": "F%d" % i, "event_type": "X"}).encode())
+                self.assertEqual(code, 401)
+        finally:
+            s.paypal_client = keep
+        self.assertEqual(s.q("SELECT id FROM webhook_events"), [])
+        self.assertEqual(s.q("SELECT id FROM audit WHERE event='webhook_rejected'"), [])
+
+    def test_oversized_webhooks_are_refused(self):
+        self.assertEqual(self.post("/webhooks/paypal", b"x" * (s.WEBHOOK_MAX_BYTES + 1))[0], 413)
+
+    def test_a_webhook_flood_is_cut_off(self):
+        s._webhook_rejections.extend([time.time()] * s.WEBHOOK_REJECTIONS[0])
+        self.assertEqual(self.post("/webhooks/paypal", b'{"id":"x"}')[0], 429)
+
+    def test_pages_cannot_be_framed(self):
+        _, headers = self.post("/webhooks/paypal", b"x" * (s.WEBHOOK_MAX_BYTES + 1))
+        self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
+        self.assertIn("frame-ancestors", headers["Content-Security-Policy"])
+
+
+class MCPResults(unittest.TestCase):
+    def mcp(self, reply):
+        m = paypal_mcp.PayPalMCP.__new__(paypal_mcp.PayPalMCP)
+        m.rpc = lambda *a, **k: reply
+        return m
+
+    def test_an_error_or_empty_result_is_not_taken_for_no_data(self):
+        for reply in ({"isError": True, "content": [{"text": "no permission"}]}, {"content": []}):
+            with self.assertRaises(paypal_mcp.MCPError):
+                self.mcp(reply).call("list_invoices", {})
+
+    def test_only_read_tools_are_offered(self):
+        m = self.mcp({"tools": [{"name": "list_invoices"}, {"name": "create_refund"}, {"name": "get_invoice"}]})
+        self.assertEqual([t["name"] for t in m.tools()], ["list_invoices", "get_invoice"])
+
+
 class FakeMCP:
     def __init__(self, *args):
         self.calls = []
@@ -324,7 +384,7 @@ class Questions(unittest.TestCase):
     def test_commands_still_win_over_questions(self):
         s.LLM.create = lambda **kw: self.fail("a command shouldn't reach Claude")
         s.owner_message("what are my rules?")
-        self.assertIn("rules", s.q1("SELECT body FROM chat WHERE sender='bot' ORDER BY id DESC")["body"])
+        self.assertIn("may agree to", s.q1("SELECT body FROM chat WHERE sender='bot' ORDER BY id DESC")["body"])
 
     def test_a_failure_says_so(self):
         def broken(*args):

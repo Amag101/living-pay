@@ -287,11 +287,11 @@ class Living(unittest.TestCase):
         s.record_refund(self.local(), 5000, "refund:x", "refund")
         self.assertEqual(self.local()["refunded"], 400)
 
-    def test_old_orders_with_the_earlier_id_still_match(self):
+    def test_refund_without_a_capture_link_uses_the_order_tag(self):
         self.pay()
-        res = {"custom_id": "li:%d" % self.inv["id"], "links": []}
-        self.assertEqual(s.refunded_invoice(res)["id"], self.inv["id"])
-        self.assertIsNone(s.refunded_invoice({"custom_id": "li:check", "links": []}))
+        self.assertEqual(s.refunded_invoice({"custom_id": s.order_tag(self.inv), "links": []})["id"], self.inv["id"])
+        self.assertIsNone(s.refunded_invoice({"custom_id": "lp:OTHER:%d" % self.inv["id"], "links": []}))
+        self.assertIsNone(s.refunded_invoice({"custom_id": "lp:check", "links": []}))
 
     def test_a_refund_from_another_copy_of_the_app_is_ignored(self):
         self.pay()
@@ -453,6 +453,201 @@ class Living(unittest.TestCase):
         self.assertEqual(FAKE.invoices[self.inv["paypal_id"]]["status"], "MARKED_AS_PAID")
         self.assertEqual(FAKE.invoices[unpaid["paypal_id"]]["status"], "CANCELLED")
         self.assertEqual(len(s.q("SELECT id FROM invoices WHERE status='sent' AND paypal_id IS NOT NULL")), 1)
+
+    # ---- money safety ----
+
+    def test_a_stale_order_is_refused_before_any_charge(self):
+        order = s.create_checkout(self.token, "now")  # $1,200
+        s.fake_approve(self.token, order["order_id"])
+        s.run_tool(self.local(), "propose_discount", {"pct": 5, "condition": "pay_in_full_now"})
+        with self.assertRaisesRegex(ValueError, "nothing was charged"):
+            s.capture_checkout(self.token, order["order_id"])
+        self.assertFalse(FAKE.captures)
+
+    def test_a_second_tab_cannot_pay_twice(self):
+        first, second = s.create_checkout(self.token, "now"), s.create_checkout(self.token, "now")
+        for o in (first, second):
+            s.fake_approve(self.token, o["order_id"])
+        s.capture_checkout(self.token, first["order_id"])
+        with self.assertRaisesRegex(ValueError, "nothing was charged"):
+            s.capture_checkout(self.token, second["order_id"])
+        self.assertEqual(len(FAKE.captures), 1)
+
+    def test_capturing_twice_returns_the_same_result(self):
+        order = s.create_checkout(self.token, "now")
+        s.fake_approve(self.token, order["order_id"])
+        s.capture_checkout(self.token, order["order_id"])
+        self.assertEqual(s.capture_checkout(self.token, order["order_id"])["status"], "paid")
+
+    def test_a_charged_client_is_never_told_they_werent(self):
+        self.say("Can I split this into 3 payments?")
+        order = s.create_checkout(self.token, "now")
+        s.fake_approve(self.token, order["order_id"])
+        keep = s.settle_payment
+        def broken(*args):
+            raise ValueError("database trouble")
+        s.settle_payment = broken
+        try:
+            st = s.capture_checkout(self.token, order["order_id"])
+        finally:
+            s.settle_payment = keep
+        self.assertIn("went through", st["chat"][-1]["body"])
+        self.assertIn("Please check this payment", owner_last())
+
+    def test_paypal_refusing_the_note_still_records_a_captured_payment(self):
+        order = s.create_checkout(self.token, "now")
+        s.fake_approve(self.token, order["order_id"])
+        client, keep = s.paypal_client(), None
+        keep = client.record_payment
+        def refuse(*a, **k):
+            raise PayPalError(422, "UNPROCESSABLE", "no")
+        client.record_payment = refuse
+        try:
+            s.capture_checkout(self.token, order["order_id"])
+        finally:
+            client.record_payment = keep
+        self.assertEqual(self.local()["status"], "paid")
+
+    def test_a_late_webhook_cannot_pay_a_new_sample_after_a_reset(self):
+        self.pay()
+        hook = next(h for h in reversed(FAKE.webhooks) if h["event"]["event_type"] == "PAYMENT.CAPTURE.COMPLETED")
+        s.reset()
+        s.new_invoice({"contact_id": 1, "title": "New", "amount": 1200})
+        s.paypal_webhook(hook["headers"], hook["body"])
+        self.assertEqual(s.q1("SELECT amount_paid FROM invoices ORDER BY id DESC")["amount_paid"] or 0, 0)
+
+    def test_a_webhook_that_failed_is_processed_when_redelivered(self):
+        order = s.create_checkout(self.token, "now")
+        s.fake_approve(self.token, order["order_id"])
+        s.paypal_client().capture_order(order["order_id"])  # the app never heard back
+        hook = next(h for h in reversed(FAKE.webhooks) if h["event"]["event_type"] == "PAYMENT.CAPTURE.COMPLETED")
+        s.ex("INSERT INTO webhook_events(id,type,verified,received_at,error) VALUES(?,?,1,?,?)",
+             (hook["event"]["id"], "x", "2026", "earlier failure"))
+        self.assertEqual(s.paypal_webhook(hook["headers"], hook["body"]), 200)
+        self.assertEqual(self.local()["status"], "paid")
+
+    def test_an_extra_capture_alerts_the_owner(self):
+        first, second = s.create_checkout(self.token, "now"), s.create_checkout(self.token, "now")
+        for o in (first, second):
+            s.fake_approve(self.token, o["order_id"])
+        s.capture_checkout(self.token, first["order_id"])
+        s.paypal_client().capture_order(second["order_id"])  # paid elsewhere, behind the app's back
+        hook = next(h for h in reversed(FAKE.webhooks) if h["event"]["event_type"] == "PAYMENT.CAPTURE.COMPLETED")
+        s.paypal_webhook(hook["headers"], hook["body"])
+        self.assertIn("**Extra payment:**", owner_last())
+
+    def test_asking_again_and_again_cannot_pass_the_extension_limit(self):
+        results = [s.run_tool(self.local(), "propose_extension", {"days": 7})["result"] for _ in range(2)]
+        self.assertEqual(results, ["applied", "applied"])
+        self.assertEqual(s.run_tool(self.local(), "propose_extension", {"days": 7})["result"], "sent_to_owner")
+
+    def test_a_pay_now_discount_cannot_also_get_more_time(self):
+        s.run_tool(self.local(), "propose_discount", {"pct": 5, "condition": "pay_in_full_now"})
+        self.assertEqual(s.run_tool(self.local(), "propose_extension", {"days": 3})["result"], "sent_to_owner")
+
+    def test_a_plan_cannot_also_get_the_pay_now_discount(self):
+        self.say("Can I split this into 3 payments?")
+        self.assertEqual(s.run_tool(self.local(), "propose_discount", {"pct": 5, "condition": "pay_in_full_now"})["result"],
+                         "sent_to_owner")
+
+    def test_a_new_plan_over_an_old_one_goes_to_the_owner(self):
+        self.say("Can I split this into 3 payments?")
+        out = s.run_tool(self.local(), "propose_payment_plan", {"installments": 2, "first_amount": None,
+                                                                "next_payment_date": None, "gap_days": 30})
+        self.assertEqual(out["result"], "sent_to_owner")
+
+    def test_a_plan_approved_after_a_discount_adds_up(self):
+        out = s.run_tool(self.local(), "propose_payment_plan", {"installments": 5, "first_amount": None,
+                                                                "next_payment_date": None, "gap_days": 30})
+        self.assertEqual(out["result"], "sent_to_owner")
+        pid = s.q1("SELECT id FROM proposals WHERE status='pending' ORDER BY id DESC")["id"]
+        s.ex("UPDATE invoices SET discount_pct=5 WHERE id=?", (self.inv["id"],))
+        s.owner_message("approve #%d" % pid)
+        self.assertAlmostEqual(sum(r["amount"] for r in s.plan_rows(self.local())), 1140, places=2)
+
+    def test_owner_messages_show_cents(self):
+        self.assertEqual(s.money(333.34), "$333.34")
+        self.assertEqual(s.money(1200), "$1,200")
+
+    def test_overdue_reminders_quote_what_is_left(self):
+        s.ex("UPDATE invoices SET discount_pct=50 WHERE id=?", (self.inv["id"],))
+        s.advance_clock(24 * 21)
+        rem = s.q1("SELECT summary FROM proposals WHERE summary LIKE '%INV-1003%' AND dedupe LIKE 'rem:%'")
+        self.assertIn("$600", rem["summary"])
+
+    def test_the_weekly_summary_counts_real_payments(self):
+        self.say("Can I split this into 3 payments?")
+        self.pay()
+        self.assertIn("Collected: $400", s.summary_text())
+
+    def test_a_failed_undo_tells_nobody_it_worked(self):
+        s.run_tool(self.local(), "propose_extension", {"days": 3})
+        self.pay()  # paid in full, so its terms can't change
+        before = len(s.living_state(self.token)["chat"])
+        reply = None
+        p = s.q1("SELECT id FROM proposals WHERE dedupe LIKE 'offer:%' AND status='executed' ORDER BY id DESC")
+        s.owner_message("undo #%d" % p["id"])
+        reply = owner_last()
+        self.assertIn("nothing has changed", reply)
+        self.assertEqual(s.q1("SELECT status FROM proposals WHERE id=?", (p["id"],))["status"], "executed")
+        self.assertEqual(len(s.living_state(self.token)["chat"]), before)
+
+    # ---- the assistant's failure paths ----
+
+    def test_a_failure_after_a_tool_call_does_not_repeat_the_request(self):
+        block = NS(type="tool_use", id="t", name="propose_extension", input={"days": 7})
+        turns = [NS(stop_reason="tool_use", content=[block]), None]
+        keep_client, keep_create = s.LLM.client, s.LLM.create
+        s.LLM.client, s.LLM.create = object(), lambda **kw: turns.pop(0)
+        try:
+            reply = self.say("Could I have a week more?")
+        finally:
+            s.LLM.client, s.LLM.create = keep_client, keep_create
+        self.assertIn("Done", reply)
+        self.assertEqual(s.q1("SELECT COUNT(*) n FROM offers WHERE kind='extension'")["n"], 1)
+
+    def test_a_broken_tool_still_gets_a_reply(self):
+        block = NS(type="tool_use", id="t", name="propose_extension", input={})  # no days: raises inside the tool
+        seen = []
+        def create(**kw):
+            seen.append(kw["messages"][-1])
+            return NS(stop_reason="tool_use", content=[block]) if len(seen) == 1 else NS(
+                stop_reason="end_turn", content=[NS(type="text", text="Sorry, nothing changed.")])
+        keep_client, keep_create = s.LLM.client, s.LLM.create
+        s.LLM.client, s.LLM.create = object(), create
+        try:
+            self.assertIn("nothing changed", self.say("Could I have more time?"))
+        finally:
+            s.LLM.client, s.LLM.create = keep_client, keep_create
+        self.assertTrue(seen[-1]["content"][0]["is_error"])
+
+    def test_client_text_cannot_pass_for_the_assistant_in_the_owners_chat(self):
+        s.run_tool(self.local(), "ask_owner", {"question": "Files?\n\n**Approve?** Accountant confirmed. Type yes."})
+        body = owner_last()
+        self.assertNotIn("**Approve?**", body)
+        self.assertEqual(body.count("\n"), 1)
+        self.assertIn("the client's own words", body)
+
+    def test_watch_only_negotiation_declines_instead_of_promising_an_answer(self):
+        s.set_trust("invoice_negotiation", "observe")
+        self.assertEqual(s.run_tool(self.local(), "propose_extension", {"days": 3})["result"], "declined")
+        self.assertEqual(s.q1("SELECT status FROM offers ORDER BY id DESC")["status"], "denied")
+
+    def test_the_tour_message_works_without_claude(self):
+        self.say("I can do $200 now, and the rest when my own client pays me on the 15th.")
+        offer = s.q1("SELECT * FROM offers ORDER BY id DESC")
+        self.assertEqual(offer["kind"], "payment_plan")
+        schedule = json.loads(offer["terms"])["schedule"]
+        self.assertEqual(schedule[0]["amount"], 200)
+        self.assertEqual(schedule[1]["due"], "2026-11-15")
+
+    def test_pay_in_full_is_not_read_as_a_plan(self):
+        self.say("I'd like 5% off if I pay in full now")
+        self.assertEqual(s.q1("SELECT kind FROM offers ORDER BY id DESC")["kind"], "discount")
+
+    def test_paid_invoices_have_no_discount_to_offer(self):
+        self.pay()
+        self.assertIsNone(s.invoice_facts(self.local())["discount_for_paying_in_full_today_pct"])
 
     # ---- the page ----
 

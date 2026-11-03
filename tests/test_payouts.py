@@ -102,7 +102,7 @@ class Payouts(unittest.TestCase):
         s.owner_message("approve")
         self.assertEqual(s.q1("SELECT status FROM payouts")["status"], "success")
         s.owner_message("undo")
-        self.assertIn("Couldn't reverse", bot())
+        self.assertIn("couldn't undo", bot())
         self.assertIn("Only items in Unclaimed status can be cancelled", bot())
         self.assertEqual(s.q1("SELECT status FROM payouts")["status"], "success")
 

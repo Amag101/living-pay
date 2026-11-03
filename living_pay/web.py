@@ -30,7 +30,7 @@ from living_pay.checkout import (
 from living_pay.paypal_events import paypal_webhook, scheduler
 from living_pay.tour import judge_may_chat, judge_may_invoice, miss_payment, start_tour, tour_state
 from living_pay.owner import advance_clock, mark_paid, new_invoice, owner_message, paypal_ask_on
-from living_pay.setup import init_db, reset
+from living_pay.database import init_db, reset
 
 
 SESSION_SECONDS = 14 * 86400
@@ -47,8 +47,10 @@ def judge_password():
 
 
 def session_value(expires, role="owner"):
-    # Signed with the owner's password, so changing it signs everyone out.
-    sig = hmac.new(owner_password().encode(), b"%s:%d" % (role.encode(), expires), hashlib.sha256).hexdigest()
+    # Signed with the owner's password, so changing it signs everyone out. LIVING_SESSION_SECRET, if it's set,
+    # stops a judge guessing that password from their own cookie. The judge's password is mixed in for their cookies.
+    key = os.environ.get("LIVING_SESSION_SECRET", "") + owner_password() + (judge_password() if role == "judge" else "")
+    sig = hmac.new(key.encode(), b"%s:%d" % (role.encode(), expires), hashlib.sha256).hexdigest()
     return "%s.%d.%s" % (role, expires, sig)
 
 
@@ -81,6 +83,18 @@ def check_login(password, address="local"):
         return "judge"
     _login_fails.setdefault(address, []).append(now_s)
     return None
+
+
+WEBHOOK_MAX_BYTES = 200_000
+WEBHOOK_REJECTIONS = (30, 60)  # rejected webhooks allowed, per this many seconds
+_webhook_rejections = []
+
+
+def webhook_allowed():
+    """A flood of forged webhooks would otherwise have each one checked with PayPal."""
+    now_s = time.time()
+    _webhook_rejections[:] = [s for s in _webhook_rejections if now_s - s < WEBHOOK_REJECTIONS[1]]
+    return len(_webhook_rejections) < WEBHOOK_REJECTIONS[0]
 
 
 def is_public(path):
@@ -116,11 +130,7 @@ def state():
 
 def webhook_status():
     good = q1("SELECT received_at FROM webhook_events WHERE verified=1 ORDER BY received_at DESC")
-    if good:
-        return "last confirmed event %s" % nice(good["received_at"])
-    if q1("SELECT id FROM webhook_events"):
-        return "off: PayPal didn't confirm the last event"
-    return "off: no events received yet"
+    return "last confirmed event %s" % nice(good["received_at"]) if good else "off: no events received yet"
 
 
 def audit_state():
@@ -221,7 +231,7 @@ def ledger_state():
                      "JOIN contacts c ON c.id=i.contact_id"):
             rows.append({"id": "pay-%d" % pay["id"], "at": pay["at"], "kind": "Payment", "invoice": pay["number"],
                          "client": pay["company"] or pay["name"],
-                         "what": {"PAYPAL": "Paid with PayPal", "PAYPAL_WEBHOOK": "Paid on PayPal",
+                         "what": {"PAYPAL": "Paid with PayPal",
                                   "PAY_LATER": "Paid with PayPal Pay Later", "BANK_TRANSFER": "Marked paid by you"}.get(pay["method"], "Payment"),
                          "amount": pay["amount"], "status": "received", "verdict": None, "by": "client",
                          "why": "", "paypal": pay["external_id"] or pay["reference"], "undo": None})
@@ -268,6 +278,11 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
 
+    def end_headers(self):
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
+        super().end_headers()
+
     def send_json(self, obj, code=200):
         data = json.dumps(obj).encode()
         self.send_response(code)
@@ -281,7 +296,7 @@ class Handler(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length") or 0)
         if not n:
             return {}
-        if n > 1_000_000:
+        if not 0 < n <= 1_000_000:
             raise ValueError("That's too much to send at once.")
         return json.loads(self.rfile.read(n).decode() or "{}")
 
@@ -401,7 +416,13 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/webhooks/paypal":
             n = int(self.headers.get("Content-Length") or 0)
-            code = paypal_webhook(self.headers, self.rfile.read(min(n, 1_000_000)).decode("utf-8", "replace"))
+            if not 0 < n <= WEBHOOK_MAX_BYTES:
+                return self.send_json({"ok": False}, 413)
+            if not webhook_allowed():
+                return self.send_json({"ok": False}, 429)
+            code = paypal_webhook(self.headers, self.rfile.read(n).decode("utf-8", "replace"))
+            if code == 401:
+                _webhook_rejections.append(time.time())
             return self.send_json({"ok": code == 200}, code)
         if path.startswith("/api/i/"):
             return self.living_post(path[len("/api/i/"):].split("/"))
@@ -425,6 +446,8 @@ class Handler(BaseHTTPRequestHandler):
                 if judge:
                     judge_may_invoice()
                 new_invoice(body)
+            elif judge and path.startswith("/api/refunds/") and os.environ.get("PAYPAL_ENV", "sandbox") != "sandbox":
+                return self.send_json({"error": "Only the owner can refund outside the sandbox."}, 403)
             elif path == "/api/refunds/send":
                 refund_invoice(body["invoice_id"], body.get("amount"), body.get("note"), body.get("key"),
                                body.get("request_id"))

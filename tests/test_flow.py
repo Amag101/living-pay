@@ -134,14 +134,6 @@ class Flow(unittest.TestCase):
         self.assertEqual((newest["invoice"], newest["balance"], newest["plan"]), ("INV-1003", 1200, ""))
         self.assertTrue([i for i in led["invoices"] if i["invoice"] == "INV-1002"][0]["overdue"])
 
-    def test_old_databases_lose_removed_features(self):
-        s.ex("UPDATE automations SET template='invoice_on_completion' WHERE template='send_invoices'")
-        s.ex("INSERT INTO automations(template,params,trust,created_at) VALUES('appointment_reminders','{}','suggest','x')")
-        s.migrate()
-        self.assertIsNone(s.q1("SELECT id FROM automations WHERE template='appointment_reminders'"))
-        self.assertIsNotNone(s.q1("SELECT id FROM automations WHERE template='send_invoices'"))
-        self.assertTrue(s.audit_state()["automations"])
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

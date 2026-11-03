@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ledger</title>
+<title>Ledger · Living Pay</title>
 <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@33.0.3/dist/ag-grid-community.min.js"></script>
 <link rel="icon" href="/logo.svg">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;550;600;700&display=swap">
@@ -113,19 +113,19 @@ const VIEWS = {
   activity: {
     rows: () => L.rows, id: (d) => d.id, file: "activity",
     columns: [
-      {field: "when", headerName: "When", width: 150, comparator: (a, b, x, y) => (x.data.at || "").localeCompare(y.data.at || "")},
-      {field: "kind", headerName: "Type", width: 105, filter: true},
-      {field: "invoice", headerName: "Invoice", width: 115, filter: true},
-      {field: "client", headerName: "Client / payee", width: 160, filter: true},
-      {field: "what", headerName: "What", flex: 2, minWidth: 260, tooltipField: "what", filter: true},
-      {field: "verdict", headerName: "Rules", width: 130, filter: true,
+      {field: "when", headerName: "When", width: 160, comparator: (a, b, x, y) => (x.data.at || "").localeCompare(y.data.at || "")},
+      {field: "kind", headerName: "Type", width: 100, filter: true},
+      {field: "invoice", headerName: "Invoice", width: 110, filter: true},
+      {field: "client", headerName: "Client / payee", width: 130, filter: true},
+      {field: "what", headerName: "What", flex: 2, minWidth: 200, tooltipField: "what", filter: true},
+      {field: "verdict", headerName: "Rules", width: 115, filter: true,
        valueFormatter: (p) => p.value ? VERDICT[p.value][1] : "",
        cellRenderer: (p) => p.value ? pill(...VERDICT[p.value]) : ""},
-      {field: "status", headerName: "Status", width: 140, enableCellChangeFlash: true, filter: true,
+      {field: "status", headerName: "Status", width: 125, enableCellChangeFlash: true, filter: true,
        cellRenderer: (p) => p.value ? pill(STATUS[p.value] ?? "", LABEL[p.value] || p.value.replace(/_/g, " ")) : ""},
-      {field: "amount", headerName: "Amount", width: 120, ...money, cellClass: (p) => p.value < 0 ? "neg" : ""},
-      {field: "why", headerName: "Why", flex: 1, minWidth: 200, tooltipField: "why", filter: true},
-      {field: "undo", headerName: "", width: 90, sortable: false, filter: false, pinned: "right", suppressCsvExport: true,
+      {field: "amount", headerName: "Amount", width: 105, ...money, cellClass: (p) => p.value < 0 ? "neg" : ""},
+      {field: "why", headerName: "Why", flex: 2, minWidth: 180, tooltipField: "why", filter: true},
+      {field: "undo", headerName: "", width: 80, sortable: false, filter: false, pinned: innerWidth > 640 ? "right" : null, suppressCsvExport: true,
        cellRenderer: (p) => p.value ? `<button class="undo" data-undo="${Number(p.value)}">Undo</button>` : ""},
     ],
     // Only real money moving counts towards the total: requests and invoices are promises.
@@ -170,7 +170,7 @@ const sum = (rows, key) => rows.reduce((n, r) => n + (r[key] || 0), 0);
 
 function makeGrid() {
   if (agGrid.ModuleRegistry && agGrid.AllCommunityModule) agGrid.ModuleRegistry.registerModules([agGrid.AllCommunityModule]);
-  const theme = agGrid.themeQuartz.withParams({ accentColor: "#0070ba", foregroundColor: "#001c43", borderColor: "#dde4ec", headerBackgroundColor: "#eff3f8" });
+  const theme = agGrid.themeQuartz.withParams({ accentColor: "#0070ba", foregroundColor: "#001c43", borderColor: "#dde4ec", headerBackgroundColor: "#eff3f8", fontFamily: "Inter, sans-serif" });
   api = agGrid.createGrid($("#grid"), {
     theme, columnDefs: VIEWS[view].columns, rowData: [], getRowId: (p) => p.data.id,
     defaultColDef: {sortable: true, resizable: true, cellDataType: false},
@@ -212,9 +212,9 @@ function renderKpis() {
     ["Outstanding", cash(k.outstanding), "still owed by clients"],
     ["Collected", cash(k.collected), "payments, less refunds"],
     ["Paid out", cash(k.paid_out), "to subcontractors"],
-    ["Rules allowed", k.agent_agreed, "requests within your rules"],
-    ["Rules asked you", k.owner_decided, "requests outside them"],
-    ["Rules refused", k.blocked, "requests nobody should agree to"],
+    ["Rules allowed", k.agent_agreed, "within your rules"],
+    ["Rules asked you", k.owner_decided, "outside your rules"],
+    ["Rules refused", k.blocked, "declined automatically"],
   ];
   $("#kpis").innerHTML = tiles.map(([l, v, h]) => `<div class="kpi"><div class="l">${l}</div><div class="v">${esc(v)}</div><div class="h">${h}</div></div>`).join("");
 }

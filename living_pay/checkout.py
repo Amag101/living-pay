@@ -7,9 +7,10 @@ import secrets
 import urllib.request
 
 from living_pay import paypal_api as paypal
+from living_pay.paypal_api import PayPalError
 from living_pay.config import CURRENCY_CODE, LOCK
 from living_pay.store import ex, get_setting, iso, log, money, now, post, q, q1, who
-from living_pay.invoices import cash, due_now, invoice_balance, invoice_link, plan_of, plan_rows, refund_sources, refundable
+from living_pay.invoices import cash, due_now, invoice_balance, invoice_link, order_tag, plan_of, plan_rows, refund_sources, refundable
 from living_pay.connectors import connector, paypal_client, paypal_mode
 from living_pay.automations import enqueue, payment_received, process_queue
 from living_pay.negotiator import chat_add, living, living_state
@@ -31,7 +32,7 @@ def create_checkout(token, which, funding=None):
         if not inv:
             raise KeyError("invoice")
         amount = checkout_amount(inv, which)
-    order = paypal_client().create_order(amount, CURRENCY_CODE, None, "lp:%d" % inv["id"],
+    order = paypal_client().create_order(amount, CURRENCY_CODE, None, order_tag(inv),
                                          "%s %s: %s" % (get_setting("business"), inv["number"], inv.get("title") or ""),
                                          request_id="lp-order-%d-%s" % (inv["id"], secrets.token_hex(6)),
                                          brand_name=get_setting("business"))
@@ -93,8 +94,7 @@ def record_refund(inv, amount, reference, kind, payment_ref=None, actor="paypal"
 
 
 def refund_invoice(invoice_id, amount, note="", key="", request_id=None):
-    """The owner sends money back through PayPal. Nothing else can start this: not the assistant, not a client,
-    and not the judge's login."""
+    """A signed-in person sends money back through PayPal. The assistant and clients have no way to start this."""
     if not re.fullmatch(r"[A-Za-z0-9-]{8,40}", str(key)):
         key = secrets.token_hex(8)  # with a key from the browser, a double click refunds only once
     note = str(note or "").strip()[:255]
@@ -162,7 +162,10 @@ def settle_payment(inv, amount, reference, method, actor):
         return result
     payment_received(inv, result, actor)
     inv = q1("SELECT * FROM invoices WHERE id=?", (inv["id"],))
-    advance_plan(inv)
+    try:
+        advance_plan(inv)
+    except PayPalError as e:  # the money is in, so a failed update to PayPal's note mustn't undo that
+        print("Couldn't move the plan on for %s: %s" % (inv["number"], e))
     thank_client(inv, amount)
     return result
 
@@ -173,13 +176,41 @@ def capture_checkout(token, order_id):
         row = q1("SELECT * FROM checkout_orders WHERE id=?", (order_id,))
         if not inv or not row or row["invoice_id"] != inv["id"]:
             raise KeyError("order")
-    captured = paypal_client().capture_order(order_id, request_id="lp-capture-" + order_id)
+        if row["status"] == "COMPLETED":
+            return living_state(token)
+        # The discount, plan or another tab may have changed what's owed since this order was made.
+        other = q1("SELECT COALESCE(SUM(amount),0) n FROM checkout_orders WHERE invoice_id=? AND status='CAPTURING' "
+                   "AND id!=?", (inv["id"], order_id))["n"]
+        if inv["status"] != "sent" or row["amount"] + other > invoice_balance(inv) + 0.005:
+            ex("UPDATE checkout_orders SET status='REFUSED' WHERE id=?", (order_id,))
+            raise ValueError("The amount due has changed, so nothing was charged. Please check the amount and pay again.")
+        ex("UPDATE checkout_orders SET status='CAPTURING' WHERE id=?", (order_id,))
+    try:
+        captured = paypal_client().capture_order(order_id, request_id="lp-capture-" + order_id)
+    except PayPalError:
+        with LOCK:
+            ex("UPDATE checkout_orders SET status='CREATED' WHERE id=?", (order_id,))
+        raise
     cap_id, amount, status = paypal.capture_of(captured)
     with LOCK:
         ex("UPDATE checkout_orders SET status=? WHERE id=?", (captured.get("status"), order_id))
         if status != "COMPLETED":
-            raise ValueError("PayPal didn't complete the payment (%s). You haven't been charged." % status)
-        settle_payment(living(token), amount, "capture:%s" % cap_id, "PAYPAL", "client")
+            raise ValueError("PayPal is still processing this payment. Please don't pay again: it will show here "
+                             "once it clears.")
+        try:
+            settle_payment(living(token), amount, "capture:%s" % cap_id, "PAYPAL", "client")
+        except (PayPalError, ValueError, TypeError, KeyError) as e:
+            # PayPal has taken the money, so the client must never be told otherwise.
+            print("Captured %s but couldn't record it: %r" % (cap_id, e))
+            log("failed", "PayPal took %s for %s, but it couldn't be recorded here" % (money(amount), inv["number"]),
+                actor="paypal", data={"capture": cap_id})
+            post("bot", "**Please check this payment:** PayPal took %s for %s, but I couldn't record it here. "
+                        "Check it in your PayPal account before asking the client again." % (money(amount), inv["number"]))
+            if living(token):
+                chat_add(inv["id"], "agent", "Your payment of %s went through. Please don't pay again."
+                         "%s will confirm it." % (cash(amount), " " + get_setting("business")))
+            process_queue()
+            return living_state(token)
         if row["funding"] == "paylater":
             ex("UPDATE payments SET method='PAY_LATER' WHERE reference=?", ("capture:%s" % cap_id,))
             post("bot", "**Pay Later:** the client used PayPal Pay Later for %s, so you have that money today and "

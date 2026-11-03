@@ -130,7 +130,7 @@ class OverdueReminders(Template):
         return drafts
 
     def _draft(self, p, inv, c, days, stage, tone, dedupe):
-        biz, amt, num = get_setting("business"), money(inv["amount"]), inv["number"]
+        biz, amt, num = get_setting("business"), money(invoice_balance(inv)), inv["number"]
         due = nice_date(inv["due_at"])
         name = first_name(c)
         if tone == "friendly":
@@ -216,8 +216,12 @@ class PayoutOnPaid(Template):
             return []
         title = inv["title"] or "Services"
         sub = q1("SELECT * FROM subcontractors WHERE id=?", (sub_id,))
-        amount = round(min(share, invoice_total(inv)), 2)
+        net = round((inv["amount_paid"] or 0) - (inv["refunded"] or 0), 2)
+        amount = round(min(share, invoice_total(inv), net), 2)
+        if amount <= 0:
+            return []
         return [{
+            "policy_reasons": ["some of this invoice was refunded"] if inv["refunded"] else [],
             "summary": "Pay %s %s for “%s”" % (sub["name"], money(amount), title),
             "explanation": "%s is paid in full, and %s's share of this job is %s."
                            % (inv["number"], first_name(sub), money(amount)),
@@ -233,6 +237,9 @@ class PayoutOnPaid(Template):
         inv = q1("SELECT * FROM invoices WHERE id=?", (draft["invoice_id"],))
         if not inv or inv["status"] != "paid":
             return "%s is no longer paid in full" % inv["number"] if inv else "the invoice is gone"
+        step = draft["steps"][0]["params"]
+        if step["amount"] > (inv["amount_paid"] or 0) - (inv["refunded"] or 0) + 0.005:
+            return "%s has been refunded, so less than this share is left" % inv["number"]
         if q1("SELECT id FROM payouts WHERE invoice_id=? AND sub_id=? AND status NOT IN ('cancelled','failed')",
               (draft["invoice_id"], draft["sub_id"])):
             return "the subcontractor has already been paid for this job"
@@ -386,8 +393,7 @@ def summary_text():
     biz = get_setting("business")
     invoiced = q1("SELECT COALESCE(SUM(amount),0) s, COUNT(*) n FROM invoices "
                   "WHERE issued_at>=? AND status!='void'", (week,))
-    collected = q1("SELECT COALESCE(SUM(amount),0) s, COUNT(*) n FROM invoices "
-                   "WHERE paid_at>=? AND status='paid'", (week,))
+    collected = q1("SELECT COALESCE(SUM(amount),0) s, COUNT(*) n FROM payments WHERE at>=?", (week,))
     refunded = q1("SELECT COALESCE(SUM(amount),0) s FROM refunds WHERE at>=?", (week,))["s"]
     open_inv = q("SELECT * FROM invoices WHERE status='sent'")
     overdue = [i for i in open_inv if days_late(i) > 0]
@@ -473,7 +479,9 @@ def dispatch(auto, draft):
         return
 
     ex("UPDATE proposals SET status='pending' WHERE id=?", (pid,))
-    msg = ["**Approve?** %s" % draft["summary"], "Why: %s" % draft["explanation"]]
+    msg = ["**Approve?** %s" % draft["summary"]]
+    if not draft.get("offer_id"):  # for a client's request, the request itself is the reason
+        msg.append("Why: %s" % draft["explanation"])
     if reasons:
         msg.append("Asking because %s." % " and ".join(reasons))
     if draft.get("preview"):
@@ -481,7 +489,8 @@ def dispatch(auto, draft):
     if any(s["op"] == "send" for s in draft["steps"]):
         msg.append("_Messages can't be unsent. Undo would send a correction where one applies._")
     if draft.get("offer_id"):
-        msg.append("_Or make a counter-offer: type “counter $750”._")
+        msg.append("_Or make a different offer: type “counter 2 payments” or “counter 30 days”. “counter $750” cuts the "
+                   "invoice total to $750, so it isn't a first payment._")
     post("bot", "\n".join(msg), pid, [{"label": "Approve", "send": "approve #%d" % pid},
                                       {"label": "Decline" if draft.get("offer_id") else "Skip", "send": "skip #%d" % pid}])
 
@@ -551,7 +560,7 @@ def undo(pid, actor="owner"):
     if not p or p["status"] != "executed" or p["kind"] != "action":
         return "There's nothing to undo for #%d." % pid
     steps = json.loads(p["executed"] or "[]")
-    reversed_labels, kept = [], []
+    reversed_labels, kept, failed = [], [], False
     for s in reversed(steps):
         inv = s.get("inverse")
         if inv:
@@ -564,9 +573,13 @@ def undo(pid, actor="owner"):
                     return "I couldn't undo that yet: %s. Nothing has changed." % e
                 kept.append("%s (%s)" % (s["label"], e))
             except (PayPalError, ValueError) as e:
+                failed = True
                 kept.append("%s (%s)" % (s["label"], getattr(e, "message", None) or e))
         elif s["connector"] != "owner":
             kept.append(s["label"])
+    if failed and not reversed_labels:  # nothing changed, so nobody should be told it did
+        log("undo_deferred", "%s: %s" % (p["summary"], "; ".join(kept)), pid, p["automation_id"], actor)
+        return "I couldn't undo that, so nothing has changed: %s." % "; ".join(kept)
     ex("UPDATE proposals SET status='undone', decided_at=? WHERE id=?", (iso(now()), pid))
     offer_hooks["settled"](json.loads(p["draft"] or "{}"), "reverted")
     log("undone", "Undid: %s" % p["summary"], pid, p["automation_id"], actor,

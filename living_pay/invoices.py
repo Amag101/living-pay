@@ -1,6 +1,7 @@
 """What an invoice owes: totals, balances and payment plan schedules."""
 
 import json
+import re
 from datetime import date, datetime, timedelta
 
 from living_pay import policy
@@ -37,6 +38,20 @@ def refundable(inv):
     return max(0, min(round(sum(r["left"] for r in refund_sources(inv)), 2), net))
 
 
+def order_tag(inv):
+    """The id on a PayPal order. It names this database, because several can share one PayPal account
+    and invoice numbers restart after the demo resets."""
+    return "lp:%s:%d" % (get_setting("paypal_suffix"), inv["id"])
+
+
+def tagged_invoice(tag):
+    """The invoice a PayPal order's tag belongs to, if it belongs to this database."""
+    m = re.match(r"^lp:(\w+):(\d+)$", tag or "")
+    if not m or m.group(1) != get_setting("paypal_suffix"):
+        return None
+    return q1("SELECT * FROM invoices WHERE id=?", (int(m.group(2)),))
+
+
 def invoice_link(inv):
     return "%s/i/%s" % (PUBLIC_URL, inv["token"])
 
@@ -47,11 +62,11 @@ TERMS = ("discount_pct", "min_due", "due_at", "plan")  # plan is local: PayPal o
 def paypal_note(inv):
     """The note on PayPal's invoice page. PayPal has no field for a schedule (only a minimum
     payment), so the agreed plan is written out here for anyone paying on PayPal's own page."""
-    ask = "Questions, or need a payment plan? Ask the invoice: %s" % invoice_link(inv)
+    ask = "Can't pay it all today? Arrange a plan or more time here: %s" % invoice_link(inv)
     left = [r for r in plan_rows(inv) if r["owed"] > 0]
     if not left:
         return ask
-    return "Payment plan agreed: %s. Next payment: %s by %s. Questions, or want to change the plan? Ask the invoice: %s" % (
+    return "Payment plan agreed: %s. Next payment: %s by %s. Want to change the plan? Go to: %s" % (
         "; ".join("%s by %s" % (cash(r["owed"]), nice_date(r["due"] + "T12:00")) for r in left),
         cash(due_now(inv)), nice_date(left[0]["due"] + "T12:00"), invoice_link(inv))
 
@@ -169,9 +184,24 @@ def shift_plan(inv, days):
     return json.dumps(plan)
 
 
+def fit_plan(inv, params):
+    """A plan approved after a discount was agreed still has to add up to what's left."""
+    plan = json.loads(params["plan"])
+    pct = params["discount_pct"] if params.get("discount_pct") is not None else (inv.get("discount_pct") or 0)
+    left = policy.cents(round(inv["amount"] * (1 - pct / 100.0), 2)) - policy.cents(inv["amount_paid"] or 0)
+    if left <= 0 or sum(policy.cents(p["amount"]) for p in plan["schedule"]) == left:
+        return params
+    each, extra = divmod(left, len(plan["schedule"]))
+    plan["schedule"] = [{"due": p["due"], "amount": (each + (1 if i < extra else 0)) / 100.0}
+                        for i, p in enumerate(plan["schedule"])]
+    return dict(params, min_due=plan["schedule"][0]["amount"], plan=json.dumps(plan))
+
+
 def resplit_plan(inv, params):
     """A discount changes what's left to pay, so any plan on the invoice at that moment is re-split
     over its remaining dates. That moment can be long after the discount was asked for."""
+    if params.get("plan"):
+        return fit_plan(inv, params)
     if params.get("discount_pct") is None or "plan" in params:
         return params
     unpaid = [r for r in plan_rows(inv) if r["owed"] > 0]

@@ -2,7 +2,7 @@
 import importlib
 
 NAMES = ("config", "store", "invoices", "connectors", "llm", "automations", "negotiator", "rules", "checkout",
-         "paypal_events", "owner", "tour", "setup", "web")
+         "paypal_events", "owner", "tour", "database", "web")
 
 
 class App:

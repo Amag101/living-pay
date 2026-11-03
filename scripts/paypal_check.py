@@ -17,15 +17,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 
-def load_env(path):
-    if not os.path.exists(path):
-        return
-    for line in open(path):
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, v = line.split("=", 1)
-            os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
-
+from living_pay.env import load_env  # noqa: E402
 
 load_env(os.path.join(ROOT, ".env"))
 os.environ.pop("PAYPAL_API_BASE", None)  # always the real sandbox here
@@ -85,7 +77,7 @@ def main():
         return summary()
 
     def create():
-        inv = client.create_invoice(body(1), request_id="li-check-%s-1" % tag)
+        inv = client.create_invoice(body(1), request_id="lp-check-%s-1" % tag)
         state["a"] = inv
         assert inv.get("id") and inv.get("status") == "DRAFT", "unexpected reply: %s" % inv.get("status")
         return inv["id"]
@@ -93,7 +85,7 @@ def main():
         return summary()
 
     def send():
-        out = client.send_invoice(state["a"]["id"], request_id="li-check-%s-1s" % tag)
+        out = client.send_invoice(state["a"]["id"], request_id="lp-check-%s-1s" % tag)
         state["payer"] = paypal.payer_link(out)
         assert client.get_invoice(state["a"]["id"])["status"] in ("SENT", "UNPAID"), "not sent"
         return "payer link %s" % ("returned" if state["payer"] else "missing")
@@ -103,7 +95,7 @@ def main():
         current = client.get_invoice(state["a"]["id"])
         later = (date.today() + timedelta(days=30)).isoformat()
         updated = client.update_invoice(paypal.apply_terms(current, discount_pct=5, min_due=400, due_date=later),
-                                        request_id="li-check-%s-1u" % tag)
+                                        request_id="lp-check-%s-1u" % tag)
         fresh = client.get_invoice(state["a"]["id"])
         got = (fresh["amount"]["value"], fresh["configuration"]["partial_payment"].get("allow_partial_payment"),
                fresh["detail"]["payment_term"].get("due_date"))
@@ -115,7 +107,7 @@ def main():
     def undo_terms():
         current = client.get_invoice(state["a"]["id"])
         client.update_invoice(paypal.apply_terms(current, discount_pct=0, min_due=0, due_date=due),
-                              request_id="li-check-%s-1r" % tag)
+                              request_id="lp-check-%s-1r" % tag)
         fresh = client.get_invoice(state["a"]["id"])
         assert fresh["amount"]["value"] == "1200.00", "total is %s" % fresh["amount"]["value"]
         return "back to 1200.00"
@@ -123,12 +115,12 @@ def main():
 
     def remind():
         client.remind(state["a"]["id"], "Reminder", "Friendly reminder from the sandbox check.",
-                      request_id="li-check-%s-1m" % tag)
+                      request_id="lp-check-%s-1m" % tag)
     check("6. Send a payment reminder", remind)
 
     def record_partial():
         out = client.record_payment(state["a"]["id"], 400, "USD", date.today().isoformat(), method="PAYPAL",
-                                    note="Check: part payment", request_id="li-check-%s-1p" % tag)
+                                    note="Check: part payment", request_id="lp-check-%s-1p" % tag)
         state["payment_id"] = out.get("payment_id")
         fresh = client.get_invoice(state["a"]["id"])
         return "status %s, due %s, payment id %s" % (fresh["status"], fresh.get("due_amount", {}).get("value"),
@@ -137,25 +129,25 @@ def main():
 
     def record_rest():
         client.record_payment(state["a"]["id"], 800, "USD", date.today().isoformat(), method="PAYPAL",
-                              note="Check: the rest", request_id="li-check-%s-1q" % tag)
+                              note="Check: the rest", request_id="lp-check-%s-1q" % tag)
         return "status %s" % client.get_invoice(state["a"]["id"])["status"]
     check("8. Record the rest (invoice paid in full)", record_rest)
 
     def cancel():
-        inv = client.create_invoice(body(2), request_id="li-check-%s-2" % tag)
-        client.send_invoice(inv["id"], request_id="li-check-%s-2s" % tag)
-        client.cancel_invoice(inv["id"], "Cancelled", "Sandbox check.", request_id="li-check-%s-2c" % tag)
+        inv = client.create_invoice(body(2), request_id="lp-check-%s-2" % tag)
+        client.send_invoice(inv["id"], request_id="lp-check-%s-2s" % tag)
+        client.cancel_invoice(inv["id"], "Cancelled", "Sandbox check.", request_id="lp-check-%s-2c" % tag)
         assert client.get_invoice(inv["id"])["status"] == "CANCELLED"
     check("9. Cancel a sent invoice (what undo does)", cancel)
 
     def order():
-        o = client.create_order(400, "USD", None, "lp:check", "Living Pay check", request_id="li-check-%s-o" % tag)
+        o = client.create_order(400, "USD", None, "lp:check", "Living Pay check", request_id="lp-check-%s-o" % tag)
         assert o.get("status") == "CREATED", o.get("status")
         return "order %s created; a buyer approves it in PayPal's popup" % o["id"]
     check("10. Create a checkout order (Orders v2)", order)
 
     def payout():
-        out = client.create_payout("li-check-%s" % tag, "subcontractor.%s@example.com" % tag.lower(), 25, "USD",
+        out = client.create_payout("lp-check-%s" % tag, "subcontractor.%s@example.com" % tag.lower(), 25, "USD",
                                    "Sandbox check", "Living Pay check")
         bid = out["batch_header"]["payout_batch_id"]
         items = client.get_payout_batch(bid).get("items", [])

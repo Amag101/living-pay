@@ -56,8 +56,8 @@ def seed():
 
     post("bot",
          "Hi, I'm your **Living Pay** assistant.\n\n"
-         "When a client needs a decision I'll ask you here, and I'll tell you what I've done. "
-         "Send an invoice to get started, or type **help**.")
+         "First, put your business name in Settings: it's what your clients see. When a client needs a decision "
+         "I'll ask you here, so check back after you send an invoice. Type **help** to see what I can do.")
 
 
 def init_db():

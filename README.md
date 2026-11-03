@@ -4,13 +4,15 @@
 
 **Live app:** https://living-pay.onrender.com (PayPal sandbox, no real money)
 
-When a client can't pay a freelancer's invoice all at once, the invoice just sits there, and the freelancer has to chase it. Living Pay sends a real PayPal invoice with an AI assistant attached. The client can ask it questions and arrange a payment plan, more time or a discount, and then pay. The assistant agrees to what the owner's rules allow, asks the owner about anything else, and declines the rest.
+A freelance designer bills $1,000. The client can manage $200 now, and the rest when their own client pays. A PayPal invoice can hold a minimum payment but not a schedule, so that deal usually happens over email, and the freelancer chases each instalment by hand.
+
+Living Pay attaches an AI assistant to a real PayPal invoice. It offers PayPal Pay Later first, agrees what the freelancer's rules allow, asks them about anything else, and chases the plan if it slips. Claude handles the conversation, plain code enforces the limits, and PayPal moves the money.
 
 Built for the [PayPal AI Hackathon](https://paypalaihackathon.devpost.com/).
 
 ## Try it
 
-Open the [live app](https://living-pay.onrender.com) and sign in with the judge password from our Devpost entry. A guided tour on the first page needs no setup: its first 5 steps take about 3 minutes, and all 10 about 10. The judge login has full access to its own fresh copy of the app, and "Start again" makes a new one.
+Open the [live app](https://living-pay.onrender.com) and sign in with the judge password from our Devpost entry. A guided tour on the first page needs no setup: its first 6 steps take about 5 minutes and end with a PayPal payment. The judge login has full access to one shared demo, and "Start again" resets it for everyone using it.
 
 ## How it works
 
@@ -26,17 +28,27 @@ Open the [live app](https://living-pay.onrender.com) and sign in with the judge 
 - **The rules are code, not a prompt.** Claude can only propose an offer. `policy.py` then allows it, sends it to the owner, or declines it, so nothing a client types can talk it past the rules.
 - **Autonomy is earned.** After the owner approves the same kind of request three times, the assistant asks to handle those itself. An undo narrows the rule back.
 - **Changes to an invoice can be undone,** from the assistant or the ledger, and every action is logged with the reason. A payment that has gone through can't be undone here, and a subcontractor payout can only be stopped while PayPal is still holding it.
-- **Only the owner can give money back.** A client can ask, and the assistant can pass that on, but it has no way to refund.
+- **Only a signed-in person can give money back.** A client can ask, and the assistant can pass that on, but it has no way to refund, and chat commands can't approve one.
 - **The owner's assistant can only read PayPal.** Ask "who hasn't paid yet?" and Claude looks it up through PayPal's MCP server, limited in code to five read-only tools. It has no way to refund, cancel or send.
 
 ## What it uses
 
-| | |
+**PayPal (sandbox)**
+
+| Product | How it's used |
 |---|---|
-| **PayPal** | Invoicing v2, Orders v2 and the JavaScript SDK with Pay Later, Payouts, Webhooks, the official MCP server (`@paypal/mcp`), all on the sandbox |
-| **AI** | Claude (`claude-opus-5-5`): the negotiator's tool calls, answers from PayPal's MCP server, and reading rules written in plain English |
-| **Ledger** | AG Grid Community |
-| **App** | Python standard library and SQLite, with no framework or build step |
+| Invoicing v2 | Create, send, change a sent invoice, minimum payments as plan instalments, the plan written into the invoice's note, reminders, cancelling, recording payments |
+| Orders v2 and the JavaScript SDK | Checkout on the invoice page, with PayPal, cards and Pay Later, a funding eligibility check, and checks that stop a stale or second order being charged |
+| Payments v2 | Full and partial refunds across several captures, with a key that stops a double click refunding twice |
+| Payouts | A subcontractor's share, with per-item status tracking, and cancelling unclaimed items as a real undo |
+| Webhooks | Signature checks through `verify-webhook-signature`, duplicate protection, and capture, refund, reversal, payout and invoice events, with polling as a backup |
+| MCP server (`@paypal/mcp`) | The owner's questions, limited in code to five read-only tools |
+
+Writes carry `PayPal-Request-Id`, an expired token is refreshed on a 401, and 429 and 5xx responses are retried once.
+
+**AI:** Claude (`claude-opus-5-5`) with strict tool schemas, structured outputs for reading plain-English rules, PayPal's MCP tools in Claude's tool loop, defences against prompt injection, a daily call budget and server-side model fallback.
+
+**App:** AG Grid Community for the ledger, and Python's standard library with SQLite, with no framework or build step.
 
 ## Run it
 
@@ -58,9 +70,13 @@ python3 server.py
 
 Then open http://localhost:8790. Questions about your PayPal account also need Node.js, for PayPal's MCP server. To pay an invoice, log in with a sandbox Personal account from the PayPal developer dashboard. Create the app on a US sandbox business account, because PayPal denies payouts from some other countries.
 
-`python3 scripts/paypal_check.py` checks every PayPal call the app relies on against your sandbox.
+`python3 scripts/paypal_check.py` checks the 12 invoice, order and payout calls that don't need a buyer against your sandbox. Capture, refunds and webhooks need a buyer or a public address, so they were tested by hand on the live sandbox.
 
-Without a Claude key, simple keyword rules stand in for the assistant.
+For webhooks, subscribe your sandbox app to `Invoicing` events, `Payment capture completed`, `refunded` and `reversed`, and `Payouts item` events, then set `PAYPAL_WEBHOOK_ID`.
+
+To show the judge's tour, set both `LIVING_OWNER_PASSWORD` and `LIVING_JUDGE_PASSWORD`, and sign in with the judge password. Optionally set `LIVING_SESSION_SECRET` to a long random value.
+
+Without a Claude key, or past the daily limit, simple keyword rules stand in for the assistant. They handle common requests like "$200 now and the rest on the 15th" or "Can I pay in 3 parts?", but they aren't a conversation.
 
 **Put it online:** `render.yaml` and the `Dockerfile` set it up on [Render](https://render.com). It won't start on a public address until you set `LIVING_OWNER_PASSWORD`. Only a client's own invoice link and PayPal's webhook are open without that password, and `LIVING_CLAUDE_DAILY_LIMIT` caps Claude calls per day (400 by default).
 
@@ -72,13 +88,16 @@ Without a Claude key, simple keyword rules stand in for the assistant.
 - PayPal lists payments taken on the invoice page as recorded by the seller, because they arrive through Orders and are then recorded on the invoice.
 - Sandbox only. It hasn't handled real money.
 
+- One business per install: there's no sign-up or Connect PayPal button yet, and PayPal keys are set when the app is deployed.
+- Decisions don't send alerts yet: the owner and the client both see them in the app.
+
 ## Tests
 
 ```bash
-for t in tests/test_*.py; do python3 "$t"; done
+for t in tests/test_*.py; do python3 "$t" || exit 1; done
 ```
 
-The tests run against `fake_paypal.py`, a stand-in that behaves the way the real sandbox was observed to behave. They need no network or accounts.
+219 tests run against `fake_paypal.py`, a stand-in that behaves the way the real sandbox was observed to behave. They need no network or accounts.
 
 ## Project layout
 
@@ -86,17 +105,21 @@ The tests run against `fake_paypal.py`, a stand-in that behaves the way the real
 |---|---|
 | `server.py` | Starts the app |
 | `living_pay/policy.py` | The rules that decide what the assistant may agree to |
-| `living_pay/negotiator.py` | The assistant on each invoice |
+| `living_pay/negotiator.py` | The assistant on each invoice: Claude's prompt, tools and keyword fallback |
+| `living_pay/llm.py` | The connection to Claude, with the daily budget |
 | `living_pay/rules.py` | The owner's rules, set in plain English and widened when earned |
 | `living_pay/owner.py` | The owner's assistant, approvals and new invoices |
 | `living_pay/automations.py` | Automations, and the executor that runs and undoes actions |
+| `living_pay/invoices.py` | Totals, balances and payment plan schedules |
 | `living_pay/connectors.py` | PayPal, and practice stand-ins |
-| `living_pay/checkout.py`, `paypal_events.py` | Taking payment, and webhooks |
+| `living_pay/checkout.py`, `paypal_events.py` | Taking payment and refunds, and webhooks with polling |
 | `living_pay/paypal_api.py`, `paypal_mcp.py` | PayPal's REST API and MCP server |
-| `living_pay/tour.py` | The judge's tour and its limits |
+| `living_pay/tour.py` | The judge's tour |
+| `living_pay/store.py`, `database.py`, `config.py` | The database, its setup and settings |
 | `living_pay/web.py` | The owner's login, page data and web server |
 | `app/` | The web pages |
-| `fake_paypal.py` | A stand-in for PayPal, for tests and the demo |
+| `scripts/` | The demo starter and the sandbox check |
+| `tests/`, `fake_paypal.py` | The tests, and a stand-in for PayPal |
 
 ## License
 

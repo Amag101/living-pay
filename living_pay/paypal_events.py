@@ -2,13 +2,12 @@
 
 from datetime import date, timedelta
 import json
-import re
 import time
 
 from living_pay.paypal_api import PayPalError
 from living_pay.config import LOCK, PAYPAL_WEBHOOK_ID, SYNC_SECONDS
-from living_pay.store import ex, get_setting, iso, log, money, now, q, q1, set_setting
-from living_pay.invoices import invoice_balance
+from living_pay.store import ex, get_setting, iso, log, money, now, post, q, q1, set_setting
+from living_pay.invoices import invoice_balance, tagged_invoice
 from living_pay.connectors import PAYPAL_ACCOUNTING, paypal_client
 from living_pay.automations import enqueue, payment_received, process_queue
 from living_pay.checkout import advance_plan, record_refund, settle_payment, thank_client
@@ -57,8 +56,7 @@ def refunded_invoice(resource):
     if source:  # a capture we never recorded belongs to someone else on this PayPal account
         pay = q1("SELECT invoice_id FROM payments WHERE reference=?", (source,))
         return q1("SELECT * FROM invoices WHERE id=?", (pay["invoice_id"],)) if pay else None
-    m = re.match(r"^l[ip]:(\d+)$", resource.get("custom_id") or "")
-    return q1("SELECT * FROM invoices WHERE id=?", (int(m.group(1)),)) if m else None
+    return tagged_invoice(resource.get("custom_id"))
 
 
 def reconcile_invoice(pp):
@@ -105,31 +103,36 @@ def paypal_webhook(headers, raw):
     if not eid:
         return 400
     with LOCK:
-        if q1("SELECT id FROM webhook_events WHERE id=? AND verified=1", (eid,)):
-            return 200  # PayPal redelivers until it sees a 2xx
+        if q1("SELECT id FROM webhook_events WHERE id=? AND verified=1 AND processed_at IS NOT NULL AND error IS NULL",
+              (eid,)):
+            return 200  # PayPal redelivers until it sees a 2xx, so one that failed gets another go
     try:
         verified = client.verify_webhook(headers, event, PAYPAL_WEBHOOK_ID)
     except PayPalError as e:
         print("webhook verification failed:", e)
         return 502
+    if not verified:  # strangers can reach this route, so nothing they send gets stored
+        print("Ignored a webhook whose signature PayPal didn't confirm")
+        return 401
     with LOCK:
         ex("INSERT OR REPLACE INTO webhook_events(id,type,verified,received_at) VALUES(?,?,?,?)",
            (eid, etype, int(verified), iso(now())))
-        if not verified:
-            log("webhook_rejected", "Ignored a %s webhook whose signature PayPal didn't confirm" % etype,
-                actor="paypal")
-            return 401
     error = None
     try:
         if etype == "PAYMENT.CAPTURE.COMPLETED":
             # Normally recorded when the invoice page captures; this covers a lost response.
             cap = event.get("resource", {})
-            m = re.match(r"^lp:(\d+)$", cap.get("custom_id") or "")
             with LOCK:
-                inv = q1("SELECT * FROM invoices WHERE id=?", (int(m.group(1)),)) if m else None
-                if inv and inv["status"] == "sent" and not q1("SELECT id FROM payments WHERE reference=?",
-                                                               ("capture:%s" % cap["id"],)):
-                    settle_payment(inv, float(cap["amount"]["value"]), "capture:%s" % cap["id"], "PAYPAL", "paypal")
+                inv = tagged_invoice(cap.get("custom_id"))
+                if inv and not q1("SELECT id FROM payments WHERE reference=?", ("capture:%s" % cap["id"],)):
+                    amount = float(cap["amount"]["value"])
+                    if inv["status"] == "sent" and amount <= invoice_balance(inv) + 0.005:
+                        settle_payment(inv, amount, "capture:%s" % cap["id"], "PAYPAL", "paypal")
+                    elif not q1("SELECT id FROM checkout_orders WHERE invoice_id=? AND status='CAPTURING'", (inv["id"],)):
+                        log("failed", "PayPal took %s for %s, which is more than was due" % (money(amount), inv["number"]),
+                            actor="paypal", data={"capture": cap["id"]})
+                        post("bot", "**Extra payment:** PayPal took %s for %s, which is more than was due. Refund it "
+                                    "in your PayPal account." % (money(amount), inv["number"]))
                     process_queue()
         if etype in ("PAYMENT.CAPTURE.REFUNDED", "PAYMENT.CAPTURE.REVERSED"):
             res = event.get("resource", {})
@@ -172,7 +175,11 @@ def poll_paypal():
     with LOCK:
         open_ids = [r["paypal_id"] for r in q("SELECT paypal_id FROM invoices WHERE status='sent' AND paypal_id IS NOT NULL")]
     for pid in open_ids:
-        fresh = client.get_invoice(pid)
+        try:
+            fresh = client.get_invoice(pid)
+        except PayPalError as e:  # one bad invoice mustn't stop the others being checked
+            print("paypal poll %s: %s" % (pid, e))
+            continue
         with LOCK:
             reconcile_invoice(fresh)
     with LOCK:

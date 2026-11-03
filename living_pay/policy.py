@@ -1,5 +1,5 @@
 """
-The negotiation policy: what the invoice's agent may agree to on its own.
+The negotiation policy: what the assistant on each invoice may agree to on its own.
 
 The model proposes an offer, this module decides, and only then does anything
 touch PayPal. It is plain, deterministic Python on purpose: nothing a client
@@ -8,9 +8,9 @@ types into the chat can change these rules, however it is phrased.
     check(offer, invoice, mandate, history) -> Verdict
 
 Verdicts:
-    ALLOW     within the owner's mandate; the agent can agree straight away
-    ESCALATE  plausible but outside the mandate; the owner decides on their phone
-    DENY      never acceptable; the agent declines politely, the owner isn't bothered
+    ALLOW     within the owner's mandate; the assistant can agree straight away
+    ESCALATE  plausible but outside the mandate; the owner decides
+    DENY      never acceptable; the assistant declines politely, the owner isn't bothered
 
 Amounts are handled in cents so a plan always adds up to the exact balance.
 """
@@ -79,7 +79,7 @@ def check(offer, invoice, mandate, history=None):
         return Verdict(DENY, ["the invoice is %s" % invoice.get("status")])
     checker = {"discount": _discount, "payment_plan": _plan, "extension": _extension}.get(kind)
     if not checker:
-        return Verdict(DENY, ["the agent can't offer “%s”" % kind])
+        return Verdict(DENY, ["the assistant can't offer “%s”" % kind])
     try:
         return checker(offer, invoice, m, history)
     except (KeyError, TypeError, ValueError) as e:
@@ -108,6 +108,9 @@ def _discount(offer, inv, m, history):
             return Verdict(DENY, ["the client has already paid more than that total"])
         return Verdict(ESCALATE, ["part of the invoice is already paid, so a discount needs the owner"], terms)
 
+    if condition == "pay_in_full_now" and inv.get("plan"):
+        return Verdict(ESCALATE, ["a payment plan is in place, so paying in full now needs the owner"], terms)
+
     reasons, decision = [], ALLOW
     limit = m["early_pay_discount_pct"] if condition == "pay_in_full_now" else 0
     limit = max(limit, m["max_discount_pct"])
@@ -116,9 +119,9 @@ def _discount(offer, inv, m, history):
         if condition == "pay_in_full_now" and limit:
             reasons.append("%g%% is above the %g%% early-payment discount" % (round(pct, 1), limit))
         elif limit:
-            reasons.append("%g%% is above the %g%% the agent may give" % (round(pct, 1), limit))
+            reasons.append("%g%% is above the %g%% the assistant may give" % (round(pct, 1), limit))
         else:
-            reasons.append("the agent may only discount for paying in full now")
+            reasons.append("the assistant may only discount for paying in full now")
 
     if m.get("floor_amount") is not None and new_total < cents(m["floor_amount"]):
         decision = worst(decision, ESCALATE)
@@ -158,13 +161,16 @@ def _plan(offer, inv, m, history):
     reasons, decision = [], ALLOW
     if n > m["max_installments"]:
         decision = ESCALATE
-        reasons.append("%d payments is more than the %d the agent may agree" % (n, m["max_installments"]))
+        reasons.append("%d payments is more than the %d the assistant may agree" % (n, m["max_installments"]))
     if first * 100 < balance * m["min_first_payment_pct"]:
         decision = ESCALATE
         reasons.append("the first payment is under %g%% of the balance" % m["min_first_payment_pct"])
     if gap > m["max_installment_gap_days"]:
         decision = ESCALATE
         reasons.append("payments %d days apart is longer than %d" % (gap, m["max_installment_gap_days"]))
+    if inv.get("plan"):
+        decision = ESCALATE
+        reasons.append("a payment plan is already in place")
     if history.get("plan_ended"):
         decision = ESCALATE
         reasons.append("the owner already ended a plan on this invoice for missed payments")
@@ -192,7 +198,12 @@ def _extension(offer, inv, m, history):
     terms = {"due_at": (due + timedelta(days=days)).isoformat(), "days": days, "shifts_plan": bool(inv.get("plan"))}
     if history.get("plan_ended"):
         return Verdict(ESCALATE, ["the owner already ended a plan on this invoice for missed payments"], terms)
-    if days > m["max_extension_days"]:
-        return Verdict(ESCALATE, ["%d days is longer than the %d-day extension the agent may give"
-                                  % (days, m["max_extension_days"])], terms)
+    if history.get("discount_needs_full_payment"):
+        return Verdict(ESCALATE, ["the discount was given for paying in full now"], terms)
+    total = days + history.get("extended_days", 0)  # asking again and again can't get past the limit
+    if total > m["escalate_extension_up_to_days"]:
+        return Verdict(DENY, ["%d days in total is far beyond anything the owner allows" % total])
+    if total > m["max_extension_days"]:
+        return Verdict(ESCALATE, ["%d days in total is longer than the %d-day extension the assistant may give"
+                                  % (total, m["max_extension_days"])], terms)
     return Verdict(ALLOW, ["within the owner's extension rules"], terms)

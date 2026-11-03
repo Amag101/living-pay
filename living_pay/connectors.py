@@ -118,21 +118,21 @@ class PayPalAccounting(Accounting):
 
     def health(self):
         return "connected (%s)" % ("PayPal sandbox" if paypal.base_url() == paypal.SANDBOX_BASE
-                                   else "PayPal at " + paypal.base_url())
+                                   else "stand-in for PayPal")
 
     def body(self, inv, contact):
         return paypal.build_invoice(
             "%s-%s" % (inv["number"], get_setting("paypal_suffix")),
             {"name": contact["name"], "email": contact["email"]},
             [{"name": inv.get("title") or "Services", "amount": inv["amount"]}], CURRENCY_CODE,
-            inv["due_at"][:10], note="Questions, or need a payment plan? Ask the invoice: %s" % invoice_link(inv),
+            inv["due_at"][:10], note="Can't pay it all today? Arrange a plan or more time here: %s" % invoice_link(inv),
             invoicer_name=get_setting("business"))
 
     def execute(self, op, params):
         client = paypal_client()
         # Same call, same id: a retry is idempotent. An undo replays the same op for the same
         # proposal with other params, so the id covers the params as well as the proposal.
-        rid = "li-%s-%s-%s" % (get_setting("paypal_suffix"), op, hashlib.sha256(json.dumps(
+        rid = "lp-%s-%s-%s" % (get_setting("paypal_suffix"), op, hashlib.sha256(json.dumps(
             [params.get("proposal_id") or secrets.token_hex(8), params], sort_keys=True, default=str)
             .encode()).hexdigest()[:24])
         if op == "create_invoice":
@@ -174,11 +174,16 @@ class PayPalAccounting(Accounting):
         if op == "record_payment":
             if q1("SELECT id FROM payments WHERE reference=?", (params["reference"],)):
                 return self.add_payment(inv, params)
-            if params.get("method") != "PAYPAL_WEBHOOK":  # PayPal already knows about payments it reports
+            try:
                 out = client.record_payment(inv["paypal_id"], params["amount"], CURRENCY_CODE,
                                             now().date().isoformat(), method=params.get("method", "OTHER"),
                                             note=params.get("note"), request_id=rid)
                 params = dict(params, external_id=out.get("payment_id"))
+            except PayPalError as e:
+                # A captured payment is real even if PayPal won't note it on the invoice.
+                if not params["reference"].startswith("capture:"):
+                    raise
+                print("Couldn't note %s on PayPal's invoice: %s" % (params["reference"], e))
             return self.add_payment(inv, params)
         raise ValueError("unknown accounting op " + op)
 
@@ -266,16 +271,27 @@ class PayPalPayouts(Payouts):
             sub = self.check(params)
             inv = q1("SELECT * FROM invoices WHERE id=?", (params["invoice_id"],))
             # One batch per proposal: PayPal refuses a reused sender_batch_id, which makes retries safe.
-            batch = "li-%s-po-%s" % (get_setting("paypal_suffix"), params.get("proposal_id") or secrets.token_hex(6))
+            batch = "lp-%s-po-%s" % (get_setting("paypal_suffix"), params.get("proposal_id") or secrets.token_hex(6))
             out = client.create_payout(batch, sub["email"], params["amount"], CURRENCY_CODE, params["note"],
                                        "Payment from %s for %s" % (get_setting("business"), inv["number"]))
             bid = out["batch_header"]["payout_batch_id"]
-            items = client.get_payout_batch(bid).get("items", [])
+            try:  # the payout has gone: PayPal being slow to list it mustn't lose the record
+                items = client.get_payout_batch(bid).get("items", [])
+            except PayPalError as e:
+                print("Couldn't read payout batch %s yet: %s" % (bid, e))
+                items = []
             item = items[0] if items else {}
             return self.record(params, sub, (item.get("transaction_status") or "pending").lower(),
                                bid, item.get("payout_item_id"))
         if op == "cancel_payout":
             row = q1("SELECT * FROM payouts WHERE id=?", (params["payout_id"],))
+            if not row["item_id"]:
+                items = client.get_payout_batch(row["batch_id"]).get("items", [])
+                if not items:
+                    raise RetryLater("PayPal is still processing this payout, so it can't be cancelled yet. "
+                                     "Try undo again in a minute")
+                row = dict(row, item_id=items[0]["payout_item_id"])
+                ex("UPDATE payouts SET item_id=? WHERE id=?", (row["item_id"], row["id"]))
             if row["item_id"]:
                 item = client.get_payout_item(row["item_id"])
                 status = item.get("transaction_status", "")

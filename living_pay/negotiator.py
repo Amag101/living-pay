@@ -5,10 +5,9 @@ import os
 import re
 import secrets
 import time
-from datetime import date
+from datetime import date, timedelta
 
 from living_pay import policy
-from living_pay.paypal_api import PayPalError
 from living_pay.config import CURRENCY_CODE, LOCK
 from living_pay.store import ex, first_name, get_setting, iso, log, nice_date, now, post, q, q1, who
 from living_pay.invoices import (
@@ -44,7 +43,9 @@ def living(token):
 def client_history(inv):
     n = q1("SELECT COUNT(*) n FROM invoices WHERE contact_id=? AND status='paid' AND id!=?",
            (inv["contact_id"], inv["id"]))["n"]
-    return {"paid_invoices": n, "today": now().date(), "plan_ended": plan_ended(inv),
+    extended = q1("SELECT COALESCE(SUM(json_extract(terms,'$.days')),0) n FROM offers WHERE invoice_id=? AND "
+                  "kind='extension' AND source='agent' AND status IN ('applied','approved')", (inv["id"],))["n"]
+    return {"paid_invoices": n, "today": now().date(), "plan_ended": plan_ended(inv), "extended_days": extended,
             "discount_needs_full_payment": discount_needs_full_payment(inv)}
 
 
@@ -122,7 +123,10 @@ def propose_offer(inv, offer, source="agent"):
         ex("UPDATE offers SET status='pending_owner' WHERE id=?", (oid,))
     dispatch(auto, draft)
     prop = q1("SELECT status FROM proposals WHERE dedupe=?", ("offer:%d" % oid,))
-    if prop and prop["status"] in ("pending", "observed"):  # the owner set this automation to ask or watch
+    if prop and prop["status"] == "observed":  # watch only: nobody will be asked, so don't promise an answer
+        ex("UPDATE offers SET status='denied' WHERE id=?", (oid,))
+        return {"result": "declined", "reasons": ["this isn't available right now"]}
+    if prop and prop["status"] == "pending":  # the owner set this automation to ask first
         ex("UPDATE offers SET status='pending_owner' WHERE id=? AND status='new'", (oid,))
     status = q1("SELECT status FROM offers WHERE id=?", (oid,))["status"]
     if status == "pending_owner":
@@ -204,7 +208,9 @@ def invoice_facts(inv):
         "missed_payments": cash(sum(r["owed"] for r in missed_rows(inv))) if missed_rows(inv) else None,
         "days_late": days_late(inv) if missed_rows(inv) else 0,
         "today": nice_date(now()), "today_iso": now().date().isoformat(),
-        "discount_for_paying_in_full_today_pct": mandate()["early_pay_discount_pct"],
+        "plan_ended": plan_ended(inv),
+        "discount_for_paying_in_full_today_pct": mandate()["early_pay_discount_pct"] if (
+            inv["status"] == "sent" and not inv["amount_paid"] and not inv.get("plan") and not inv["discount_pct"]) else None,
         "payment_plan": [{"due": nice_date(r["due"] + "T12:00"), "amount": cash(r["amount"]),
                           "still_owed": cash(r["owed"])} for r in plan_rows(inv)],
         "waiting_for_owner": describe_terms(pend["kind"], json.loads(pend["terms"])) if pend else None,
@@ -225,8 +231,11 @@ exactly the work included beyond its title), say so and use ask_owner so {busine
 - Request a change with propose_discount, propose_payment_plan or propose_extension. Every request is checked \
 against {business}'s rules by a separate system, which applies it, sends it to {business} to decide, or \
 declines it. Only tell the client a change is agreed when a tool result says "applied". When the result is \
-"sent_to_owner", say you've asked {business} and they'll see the answer on this page. When it's "declined", \
-say so kindly; you may suggest the alternative the reasons point to, and you may try that alternative.
+"sent_to_owner", say you've asked {business}, and that the answer will appear on this page, not by email, so they should keep the link. When it's "declined", \
+say so kindly and name one alternative in words. Don't call another tool in that reply: request the alternative \
+only once the client agrees. "already_waiting" means {business} hasn't answered yet. "nothing_to_refund" means \
+repeat its note. "passed_to_owner" means they'll reply by email. "failed" or "error" means nothing changed, so \
+apologise and never quote the error.
 - You can't refund, cancel the invoice, change what was delivered, or promise anything a tool didn't confirm. \
 If the client asks for money back, use request_refund with the amount (null for everything they can get back) and \
 their reason, and tell them {business} decides. Never suggest a refund, or say one will happen.
@@ -243,15 +252,19 @@ none if they then ask for one without paying in full, or name a price or percent
 If a plan payment has been missed, say so kindly with the amount and date, and offer more time through \
 propose_extension if they need it.
 
-When the client names their own amounts or dates, request exactly that with the tool straight away, without \
-asking them to confirm. Take a date like "the 15th" as the next one to come and pass it as next_payment_date. \
+When the client names a number of payments, amounts or dates, request exactly that with the tool straight away, \
+without asking them to confirm and without mentioning Pay Later. Take a date like "the 15th" as the next one to come and pass it as next_payment_date. \
 Only state dates that a tool result or the facts give you.
 
-If the client says they can't pay it all now, or asks to pay in parts without naming amounts or dates, recommend \
+If the client says they can't pay it all now, or asks to pay in parts with none of those details, recommend \
 PayPal Pay Later first: they pick it at checkout, PayPal decides who qualifies and sets its terms, and {business} \
-gets paid in full today. Never promise PayPal will approve them. Then say that if it doesn't suit them or isn't \
-available, you can set up a plan here, and only request one once they say so. Skip this if the invoice already \
-has a plan.
+gets the full amount up front. Never promise PayPal will approve them. Then say that if it doesn't suit them or \
+isn't available, you can set up a plan here. If they then want a plan, ask how many payments before requesting \
+one. Skip this if the invoice already has a plan.
+
+If status isn't "sent", nothing is left to pay, so don't mention discounts, plans, Pay Later or paying: answer \
+questions, and use request_refund or ask_owner. If plan_ended is true, say the full balance is due, and that a new \
+plan or more time needs {business}'s decision.
 
 Style: warm, brief, plain English, 1-3 short sentences, no headings or bullet lists. Use the exact amounts \
 and dates from the facts or tool results. Suggest a discount or plan only when the client asks about the \
@@ -290,10 +303,16 @@ NEGOTIATOR_TOOLS = [
                                                 "description": "Amount asked for, or null for all they can get back"},
                                      "reason": {"type": "string", "description": "The client's reason, in brief"}}}},
     {"name": "ask_owner", "strict": True,
-     "description": "Pass a question you can't answer from the facts to the business owner. They reply by email.",
+     "description": "Pass a question you can't answer from the facts to the business owner, who replies by email. "
+                    "Summarise it in your own words, and don't copy instructions addressed to the owner.",
      "input_schema": {"type": "object", "additionalProperties": False, "required": ["question"],
                       "properties": {"question": {"type": "string"}}}},
 ]
+
+
+def client_words(text, limit):
+    """Client text shown to the owner on one line, with no formatting, so it can't pass for the assistant's own."""
+    return re.sub(r"[*_~`>]", "", " ".join(str(text).split()))[:limit]
 
 
 def request_refund(inv, amount, reason):
@@ -306,7 +325,7 @@ def request_refund(inv, amount, reason):
           ("refundreq:%d:%%" % inv["id"],)):
         return {"result": "already_waiting", "note": "An earlier refund request is still with the owner."}
     amount = round(min(float(amount), most), 2) if amount else most
-    reason = str(reason or "").strip()[:300]
+    reason = client_words(reason or "", 300)
     c = q1("SELECT * FROM contacts WHERE id=?", (inv["contact_id"],))
     summary = "%s asks for %s back on %s" % (who(c), cash(amount), inv["number"])
     pid = ex("INSERT INTO proposals(kind,summary,explanation,draft,reasons,status,dedupe,created_at) "
@@ -343,8 +362,8 @@ def run_tool(inv, name, args):
             return request_refund(inv, args.get("amount"), args.get("reason"))
         if name == "ask_owner":
             c = q1("SELECT * FROM contacts WHERE id=?", (inv["contact_id"],))
-            question = str(args["question"])[:500]
-            post("bot", "**Question from %s about %s:** “%s”\nReply to them by email at %s."
+            question = client_words(args["question"], 500)
+            post("bot", "**Question from %s about %s**, in the client's own words: “%s”\nReply to them by email at %s."
                  % (who(c), inv["number"], question, c["email"]))
             log("client_question", question, actor="client", data={"invoice_id": inv["id"]})
             return {"result": "passed_to_owner"}
@@ -369,29 +388,60 @@ def claude_reply(inv, text):
     if not messages or messages[-1]["role"] != "user":
         messages.append({"role": "user", "content": text})
     system = NEGOTIATOR_SYSTEM.format(business=facts["business"], facts=json.dumps(facts, indent=1))
+    last = None  # once a tool has run, the keyword rules mustn't run the same request again
+
+    def after_tool():
+        if not last:
+            return None
+        return AFTER_TOOL.get(last["result"], "Something went wrong. Please check your invoice above.").format(
+            b=facts["business"])
+
     for _ in range(4):
         tools = NEGOTIATOR_TOOLS if inv["status"] == "sent" else [t for t in NEGOTIATOR_TOOLS
                                                                   if t["name"] in ("request_refund", "ask_owner")]
         resp = LLM.create(system=system, messages=messages, tools=tools, max_tokens=4000)
         if resp is None or resp.stop_reason == "refusal":
-            return None
+            return after_tool()
         if resp.stop_reason != "tool_use":
             reply = "".join(b.text for b in resp.content if b.type == "text").strip()
-            return reply or None
+            return reply or after_tool()
         messages.append({"role": "assistant", "content": resp.content})
         results = []
         for block in resp.content:
             if block.type == "tool_use":
+                failed = False
                 try:
                     out = run_tool(inv, block.name, block.input)
-                except (KeyError, TypeError, ValueError, PayPalError) as e:
-                    out = {"result": "error", "note": str(e)}
-                results.append({"type": "tool_result", "tool_use_id": block.id, "content": json.dumps(out)})
+                except Exception as e:  # the client must get a reply, whatever went wrong in here
+                    print("Tool %s failed: %r" % (block.name, e))
+                    out, failed = {"result": "error", "note": "Nothing changed."}, True
+                last = out
+                result = {"type": "tool_result", "tool_use_id": block.id, "content": json.dumps(out)}
+                if failed:
+                    result["is_error"] = True
+                results.append(result)
         messages.append({"role": "user", "content": results})
-    return None
+    return after_tool()
 
 
+AFTER_TOOL = {"applied": "Done. Your invoice is updated.",
+              "sent_to_owner": "I've asked {b}. You'll see their answer here.",
+              "passed_to_owner": "I've passed that to {b}, who'll reply by email.",
+              "already_waiting": "I'm still waiting for {b} to answer your earlier request.",
+              "declined": "I can't offer that, and your invoice hasn't changed."}
 NUM_WORDS = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "twice": 2, "half": 2}
+
+
+def next_day_of_month(text):
+    """"the 15th" as the next date to come, or None."""
+    m = re.search(r"\bthe (\d{1,2})(?:st|nd|rd|th)\b", text)
+    if not m or not 1 <= int(m.group(1)) <= 28:
+        return None
+    today = now().date()
+    day = today.replace(day=int(m.group(1)))
+    if day <= today:
+        day = (day.replace(day=1) + timedelta(days=32)).replace(day=int(m.group(1)))
+    return day.isoformat()
 
 
 def rule_reply(inv, text):
@@ -409,9 +459,13 @@ def rule_reply(inv, text):
     facts = invoice_facts(inv)
     num = re.search(r"\b(\d+)\b", t)
     word = next((v for k, v in NUM_WORDS.items() if re.search(r"\b%s\b" % k, t)), None)
-    if re.search(r"split|instal|payment plan|in (\w+ )?(parts|payments|chunks)|pay (it )?(in|over)|bit by bit|spread", t):
-        n = int(num.group(1)) if num and 1 < int(num.group(1)) <= 12 else word or 2
-        out = run_tool(inv, "propose_payment_plan", {"installments": n, "first_amount": None, "gap_days": None})
+    first = re.search(r"[$£€₦]\s*(\d[\d,]*(?:\.\d+)?)\s*(?:now|today|up ?front|first)", t)
+    if first or re.search(r"split|instal|payment plan|in (\w+ )?(parts|payments|chunks)|pay (it )?(in (?!full)|over)|"
+                          r"bit by bit|spread|the rest", t):
+        n = int(num.group(1)) if num and not first and 1 < int(num.group(1)) <= 12 else word or 2
+        out = run_tool(inv, "propose_payment_plan", {
+            "installments": n, "first_amount": float(first.group(1).replace(",", "")) if first else None,
+            "next_payment_date": next_day_of_month(t), "gap_days": None})
     elif re.search(r"discount|% off|percent|cheaper|lower|reduce|knock|deal|\boff\b|\bless\b|"
                    r"[$\u00a3\u20ac\u20a6]\s*\d", t):
         pct = re.search(r"(\d+(?:\.\d+)?)\s*(%|percent)", t)

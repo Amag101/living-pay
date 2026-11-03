@@ -1,7 +1,7 @@
 """The owner assistant's read-only window on PayPal, through PayPal's official MCP server.
 
 Runs `npx @paypal/mcp` and talks to it over stdin/stdout. Only the tools in READ_ONLY can
-be called, whatever the model asks for: money still moves only through policy.py.
+be called, whatever the model asks for, so this assistant has no way to move money.
 """
 import json
 import os
@@ -23,7 +23,9 @@ def available():
 
 class PayPalMCP:
     def __init__(self, access_token, environment="SANDBOX"):
-        env = dict(os.environ, PAYPAL_ACCESS_TOKEN=access_token, PAYPAL_ENVIRONMENT=environment)
+        # The MCP server gets only what it needs, not this app's other secrets.
+        env = {"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", "/tmp"),
+               "PAYPAL_ACCESS_TOKEN": access_token, "PAYPAL_ENVIRONMENT": environment}
         self.proc = subprocess.Popen(["npx", "-y", "@paypal/mcp@1.8.1", "--tools=all"], env=env, text=True,
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=subprocess.DEVNULL)
@@ -90,4 +92,7 @@ class PayPalMCP:
         if name not in READ_ONLY:
             raise MCPError("%s isn't allowed: this assistant can only read from PayPal." % name)
         result = self.rpc("tools/call", {"name": name, "arguments": arguments or {}})
-        return "\n".join(c.get("text", "") for c in result.get("content", []))
+        text = "\n".join(c.get("text", "") for c in result.get("content", []))
+        if result.get("isError") or not text.strip():  # an error must not look like "no data"
+            raise MCPError(text.strip() or "PayPal returned nothing.")
+        return text
