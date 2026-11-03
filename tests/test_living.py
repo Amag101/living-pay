@@ -442,6 +442,18 @@ class Living(unittest.TestCase):
             order = s.create_checkout(self.token, "now", funding)
             self.assertNotEqual(s.q1("SELECT funding FROM checkout_orders WHERE id=?", (order["order_id"],))["funding"], "paylater")
 
+    # ---- the tour's fresh start ----
+
+    def test_starting_again_leaves_nothing_open_on_paypal(self):
+        self.say("Can I split this into 3 payments?")
+        self.pay()  # part paid, which PayPal won't cancel
+        s.new_invoice({"contact_id": 2, "title": "Unpaid", "amount": 100})
+        unpaid = s.q1("SELECT * FROM invoices ORDER BY id DESC")
+        s.start_tour()
+        self.assertEqual(FAKE.invoices[self.inv["paypal_id"]]["status"], "MARKED_AS_PAID")
+        self.assertEqual(FAKE.invoices[unpaid["paypal_id"]]["status"], "CANCELLED")
+        self.assertEqual(len(s.q("SELECT id FROM invoices WHERE status='sent' AND paypal_id IS NOT NULL")), 1)
+
     # ---- the page ----
 
     def test_state_for_a_valid_link_only(self):

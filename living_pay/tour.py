@@ -5,11 +5,11 @@ import sqlite3
 import time
 from datetime import date, datetime, timedelta
 
-from living_pay.config import DB_PATH, LOCK
+from living_pay.config import CURRENCY_CODE, DB_PATH, LOCK
 from living_pay.store import db, ex, get_setting, iso, log, now, q, q1, set_setting
-from living_pay.invoices import plan_of, plan_rows
+from living_pay.invoices import invoice_balance, plan_of, plan_rows
 from living_pay.paypal_api import PayPalError
-from living_pay.connectors import connector
+from living_pay.connectors import connector, paypal_client
 from living_pay.automations import enqueue, process_queue
 from living_pay.owner import new_invoice
 from living_pay.setup import reset
@@ -76,15 +76,26 @@ def earlier_approvals(amount):
             json.dumps(["the first payment is under 30% of the balance"]), json.dumps(terms), iso(now()), iso(now())))
 
 
+def close_open_invoices():
+    """Leaves nothing open on the PayPal sandbox, so "Who hasn't paid?" starts clean after Start again.
+    PayPal won't cancel a part-paid invoice, so those are recorded as settled instead. No money moves."""
+    for inv in q("SELECT * FROM invoices WHERE status='sent'"):
+        try:
+            if inv["paypal_id"] and (inv["amount_paid"] or 0) > 0:
+                paypal_client().record_payment(inv["paypal_id"], invoice_balance(inv), CURRENCY_CODE,
+                                               now().date().isoformat(), method="OTHER", note="Demo restarted",
+                                               request_id="lp-tour-close-%s" % inv["paypal_id"])
+            else:
+                connector("accounting").execute("void_invoice", {"invoice_id": inv["id"]})
+        except (PayPalError, ValueError) as e:
+            print("tour: couldn't close %s: %s" % (inv["number"], e))
+
+
 def start_tour():
     """A fresh app for each judge, with full access: everything they can see or change is the demo's own."""
     judge_may_invoice()
     with LOCK:
-        for inv in q("SELECT * FROM invoices WHERE tour=1 AND status='sent'"):
-            try:
-                connector("accounting").execute("void_invoice", {"invoice_id": inv["id"]})
-            except (PayPalError, ValueError) as e:  # a part-paid invoice can't be cancelled on PayPal
-                print("tour: couldn't cancel %s: %s" % (inv["number"], e))
+        close_open_invoices()
         business = get_setting("business")
         keep_a_copy()
         reset()
